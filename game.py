@@ -1,4 +1,13 @@
 import keyboard
+import dotenv
+from os import system, getenv
+import random
+from shared_definitions import *
+import sys
+
+dotenv.load_dotenv()
+HOST = getenv('IP')
+PORT = 1717
 
 GAME_FIELD_WIDTH = 81
 GAME_FIELD_HEIGHT = 21  
@@ -6,81 +15,121 @@ MIN_X = 0
 MIN_Y = 0
 MAX_X = GAME_FIELD_WIDTH - 1
 MAX_Y = GAME_FIELD_HEIGHT - 1
-footer = ""
+PLAYER_SIDE_HEIGHT = 4
+PHARAOH_COORDINATES = (10, MAX_Y - 3)
+GUARD_COORDINATES = [(7, MAX_Y - 3), (13, MAX_Y - 3)]
 
-class colors:
-    GRAY = '\033[90m'
-    WHITE = '\033[37m'
-    RAINBOW = ''
-    GREEN = '\033[92m'
-    BLUE = '\033[94m'
-    YELLOW = '\033[93m'
-    RED = '\033[91m'
-    ENDC = '\033[0m'
-
-PHARAOH = "↰"
-HOSPITAL = "HOS☩"
-SUPER_BARRACKS = "SUPⵌ"
-BARRACKS = "ⵌ"
-LEVEL_BANDAGE = "☛"
-FACE_VALUE_BANDAGE = "+"
-COMBINED_BANDAGE = "⇄"
-PLUS_2 = "+2"
-NUM1 = "1"
-NUM2 = "2"
-NUM3 = "3"
-NUM4 = "4"
-NUM5 = "5"
-NUM6 = "6"
-NUM7 = "7"
-NUM8 = "8"
-NUM9 = "9"
-
-main_colors = [colors.GREEN, colors.BLUE, colors.YELLOW, colors.RED]
-numerical_face_values = [NUM1, NUM2, NUM3, NUM4, NUM5, NUM6, NUM7, NUM8, NUM9, PLUS_2]
-
-class ColoredString:
-    def __init__(self, string, color=colors.GRAY):
-        self.string = string
-        self.color = color
-    def __repr__(self):
-        return_str = ''
-        if self.color == colors.RAINBOW:
-            for i in range(0, len(self.string)):
-                return_str += (main_colors[i%4] + self.string[i] + colors.ENDC)
-        else:
-            return_str = self.color + self.string + colors.ENDC
-
-        return return_str
-
-class Card(ColoredString):
-    pass
-
-entities = {}
+class PlayerManager():
+    close_game = False
+    player_num = 0
+    my_turn = False
+    entities = {}
+    footer = ""
+    second_player_joined = False
 
 def add_new_entity(entity_string, coords):
-    entities[coords] = entity_string
+    if isinstance(coords, list):
+        for coords_pair in coords:
+            PlayerManager.entities[coords_pair] = entity_string
+    else:
+        PlayerManager.entities[coords] = entity_string
 
 def display_game_field():
     for y in range(0, GAME_FIELD_HEIGHT):
         x = 0
         while x < GAME_FIELD_WIDTH:
-            if (x, y) in entities:
-                print(entities[(x, y)], end='')
-                x += len(entities[(x,y)].string)
+            if (x, y) in PlayerManager.entities:
+                print(PlayerManager.entities[(x, y)], end='')
+                x += len(PlayerManager.entities[(x,y)].content)
             else:
                 print(' ', end='')
                 x += 1
         print()
-    print(ColoredString(footer))
+    print(Entity(PlayerManager.footer))
 
-add_new_entity(ColoredString("╭" + "─" * (GAME_FIELD_WIDTH - 2) + "╮"), (MIN_X, MIN_Y))
+def refresh_screen():
+    system('cls')
+    display_game_field()
+
+def send_public_entities():
+    public_entities = [entity_with_coords for entity_with_coords in PlayerManager.entities.items() if entity_with_coords[1].public]
+    sendall_with_end(s, SOCKET_SHARED_ENTITIES_UPDATE)
+    sendall_with_end(s, pickle.dumps(public_entities))
+
+def receive_public_entities():
+    encoded_data = recvall(s)
+    if encoded_data == SOCKET_SHARED_ENTITIES_UPDATE:
+        received_entities = pickle.loads(recvall(s))
+        for entity_with_coords in received_entities:
+            PlayerManager.entities[(entity_with_coords[0][0], abs(entity_with_coords[0][1]-MAX_Y))] = entity_with_coords[1] # reverse y coordinate and add to the entity list
+        refresh_screen()
+        return 1
+    elif encoded_data == SOCKET_YOUR_TURN:
+        PlayerManager.my_turn = True
+        return 0
+
+def end_turn():
+    sendall_with_end(s, SOCKET_YOUR_TURN)
+    PlayerManager.my_turn = False
+
+add_new_entity(Entity("╭" + "─" * (GAME_FIELD_WIDTH - 2) + "╮"), (MIN_X, MIN_Y))
 for i in range(1, GAME_FIELD_HEIGHT - 1):
-    add_new_entity(ColoredString("│"), (MIN_X, i))
-    add_new_entity(ColoredString("│"), (MAX_X, i))
-add_new_entity(ColoredString("╰" + "─" * (GAME_FIELD_WIDTH - 2) + "╯"), (MIN_X, MAX_Y))
+    add_new_entity(Entity("│"), [(MIN_X, i), (MAX_X, i)])
+add_new_entity(Entity("╰" + "─" * (GAME_FIELD_WIDTH - 2) + "╯"), (MIN_X, MAX_Y))
 
-footer = "Press spacebar when you are ready."
+PlayerManager.footer = "Press spacebar when you are ready."
 display_game_field()
-print("Zoom in until you no longer see this message.")
 keyboard.wait('space')
+system('cls')
+print("Connecting to the server...")
+
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+try:
+    s.connect((HOST, PORT))
+    sendall_with_end(s, SOCKET_CONNECTION_ESTABLISHED)
+    data = recvall(s) # receive SOCKET_CONNECTION_ESTABLISHED or SOCKET_LOBBY_FULL
+    if data == SOCKET_LOBBY_FULL:
+        system('cls')
+        print("The game has already started, please wait until it is finished. Press spacebar to exit.")
+        PlayerManager.close_game = True
+        keyboard.wait('space')
+        sys.exit()
+    data = recvall(s) # receive player number
+
+    PlayerManager.player_num = int.from_bytes(data)
+    PlayerManager.footer = f"You are player {PlayerManager.player_num}."
+    if PlayerManager.player_num == 1:
+        add_new_entity(Entity("-" * (GAME_FIELD_WIDTH - 2), colors.YELLOW), (1, PLAYER_SIDE_HEIGHT + 2))
+        add_new_entity(Entity("-" * (GAME_FIELD_WIDTH - 2), colors.BLUE), (1, MAX_Y - (PLAYER_SIDE_HEIGHT + 2)))
+        PlayerManager.my_turn = True
+    elif PlayerManager.player_num == 2:
+        add_new_entity(Entity("-" * (GAME_FIELD_WIDTH - 2), colors.YELLOW), (1, MAX_Y - (PLAYER_SIDE_HEIGHT + 2)))
+        add_new_entity(Entity("-" * (GAME_FIELD_WIDTH - 2), colors.BLUE), (1, PLAYER_SIDE_HEIGHT + 2))
+    add_new_entity(WarriorCard(PHARAOH, colors.WHITE, public=True), PHARAOH_COORDINATES)
+    add_new_entity(WarriorCard(NUM1, colors.GREEN, public=True), GUARD_COORDINATES[0])
+    add_new_entity(WarriorCard(NUM1, colors.GREEN, public=True), GUARD_COORDINATES[1])
+    refresh_screen()
+
+    send_public_entities()
+    receive_public_entities()
+
+    PlayerManager.second_player_joined = True
+
+    while not PlayerManager.close_game:
+        if PlayerManager.my_turn:
+            keyboard.wait('space')
+            random.choice([entity for coords, entity in PlayerManager.entities.items() if coords in GUARD_COORDINATES and entity.power != MAX_WARRIOR_CARD_POWER]).upgrade_value()
+            refresh_screen()
+            send_public_entities()
+            end_turn()
+        else:
+            while receive_public_entities():
+                pass
+
+except (ConnectionRefusedError, TimeoutError, ConnectionResetError):
+    system('cls') 
+    print(("Your opponent has disconnected, unable to continue." if PlayerManager.second_player_joined else "Server is offline, unable to connect.") + " Press spacebar to exit.")
+    PlayerManager.close_game = True
+    keyboard.wait('space')
+    sys.exit()
