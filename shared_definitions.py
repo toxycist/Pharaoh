@@ -48,10 +48,16 @@ class Entity:
             return_str = self.color + self.content + colors.ENDC
 
         return return_str
+    
+    def switch_public(self):
+        self.public = not self.public
 
 class WarriorCard(Entity):
+    __id_counter = 0
     def __init__(self, face_value, level, public = False):
         super(WarriorCard, self).__init__(face_value, level, public)
+        self.id = type(self).__id_counter
+        type(self).__id_counter += 1
         if face_value in numerical_face_values:
             self.power = (main_colors.index(self.color) * len(numerical_face_values)) + numerical_face_values.index(self.content)
 
@@ -71,6 +77,11 @@ class WarriorCard(Entity):
     def upgrade_value(self, by=1):
         self.power += by
         return self.__refresh_string_and_color()
+
+class GuardCard(WarriorCard):
+    __id_counter = 0
+    def __init__(self, face_value = NUM1, level = colors.GREEN, public = True):
+        super(GuardCard, self).__init__(face_value, level, public)
 
 SOCKET_END_MSG = b"<END>"
 SOCKET_CONNECTION_ESTABLISHED = b"CONNECTION ESTABLISHED"

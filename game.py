@@ -23,24 +23,26 @@ class PlayerManager():
     close_game = False
     player_num = 0
     my_turn = False
-    entities = {}
+    my_entities = {}
+    received_entities = {}
     footer = ""
     second_player_joined = False
 
 def add_new_entity(entity_string, coords):
     if isinstance(coords, list):
         for coords_pair in coords:
-            PlayerManager.entities[coords_pair] = entity_string
+            PlayerManager.my_entities[coords_pair] = entity_string
     else:
-        PlayerManager.entities[coords] = entity_string
+        PlayerManager.my_entities[coords] = entity_string
 
 def display_game_field():
     for y in range(0, GAME_FIELD_HEIGHT):
         x = 0
         while x < GAME_FIELD_WIDTH:
-            if (x, y) in PlayerManager.entities:
-                print(PlayerManager.entities[(x, y)], end='')
-                x += len(PlayerManager.entities[(x,y)].content)
+            entity = PlayerManager.my_entities.get((x, y)) or PlayerManager.received_entities.get((x, y))
+            if entity:
+                print(entity, end='')
+                x += len(entity.content)
             else:
                 print(' ', end='')
                 x += 1
@@ -52,7 +54,7 @@ def refresh_screen():
     display_game_field()
 
 def send_public_entities():
-    public_entities = [entity_with_coords for entity_with_coords in PlayerManager.entities.items() if entity_with_coords[1].public]
+    public_entities = [entity_with_coords for entity_with_coords in PlayerManager.my_entities.items() if entity_with_coords[1].public]
     sendall_with_end(s, SOCKET_SHARED_ENTITIES_UPDATE)
     sendall_with_end(s, pickle.dumps(public_entities))
 
@@ -61,7 +63,7 @@ def receive_public_entities():
     if encoded_data == SOCKET_SHARED_ENTITIES_UPDATE:
         received_entities = pickle.loads(recvall(s))
         for entity_with_coords in received_entities:
-            PlayerManager.entities[(entity_with_coords[0][0], abs(entity_with_coords[0][1]-MAX_Y))] = entity_with_coords[1] # reverse y coordinate and add to the entity list
+            PlayerManager.received_entities[(entity_with_coords[0][0], abs(entity_with_coords[0][1]-MAX_Y))] = entity_with_coords[1] # reverse y coordinate and add to the received entity list
         refresh_screen()
         return 1
     elif encoded_data == SOCKET_YOUR_TURN:
@@ -106,9 +108,9 @@ try:
     elif PlayerManager.player_num == 2:
         add_new_entity(Entity("-" * (GAME_FIELD_WIDTH - 2), colors.YELLOW), (1, MAX_Y - (PLAYER_SIDE_HEIGHT + 2)))
         add_new_entity(Entity("-" * (GAME_FIELD_WIDTH - 2), colors.BLUE), (1, PLAYER_SIDE_HEIGHT + 2))
-    add_new_entity(WarriorCard(PHARAOH, colors.WHITE, public=True), PHARAOH_COORDINATES)
-    add_new_entity(WarriorCard(NUM1, colors.GREEN, public=True), GUARD_COORDINATES[0])
-    add_new_entity(WarriorCard(NUM1, colors.GREEN, public=True), GUARD_COORDINATES[1])
+    add_new_entity(Entity(PHARAOH, colors.WHITE, public=True), PHARAOH_COORDINATES)
+    add_new_entity(GuardCard(), GUARD_COORDINATES[0])
+    add_new_entity(GuardCard(), GUARD_COORDINATES[1])
     refresh_screen()
 
     send_public_entities()
@@ -119,14 +121,15 @@ try:
     while not PlayerManager.close_game:
         if PlayerManager.my_turn:
             keyboard.wait('space')
-            random.choice([entity for coords, entity in PlayerManager.entities.items() if coords in GUARD_COORDINATES and entity.power != MAX_WARRIOR_CARD_POWER]).upgrade_value()
+            guard_cards_to_upgrade = [entity for coords, entity in PlayerManager.my_entities.items() if isinstance(entity, GuardCard) and entity.power != MAX_WARRIOR_CARD_POWER]
+            if guard_cards_to_upgrade:
+                random.choice(guard_cards_to_upgrade).upgrade_value()
             refresh_screen()
             send_public_entities()
             end_turn()
         else:
             while receive_public_entities():
                 pass
-
 except (ConnectionRefusedError, TimeoutError, ConnectionResetError):
     system('cls') 
     print(("Your opponent has disconnected, unable to continue." if PlayerManager.second_player_joined else "Server is offline, unable to connect.") + " Press spacebar to exit.")
