@@ -6,47 +6,47 @@ from shared_definitions import *
 import sys
 
 dotenv.load_dotenv()
-HOST = getenv('IP')
-PORT = 1717
+HOST: str | None = getenv('IP')
+PORT: int = 1717
 
-GAME_FIELD_WIDTH = 81
-GAME_FIELD_HEIGHT = 21  
-MIN_X = 0
-MIN_Y = 0
-MAX_X = GAME_FIELD_WIDTH - 1
-MAX_Y = GAME_FIELD_HEIGHT - 1
-PLAYER_SIDE_HEIGHT = 4
-PHARAOH_COORDINATES = (10, MAX_Y - 3)
-GUARD_COORDINATES = [(7, MAX_Y - 3), (13, MAX_Y - 3)]
-MAIN_WARRIOR_LIST_COORDINATES = (23, MAX_Y - 5)
+GAME_FIELD_WIDTH: int = 81
+GAME_FIELD_HEIGHT: int = 21  
+MIN_X: int = 0
+MIN_Y: int = 0
+MAX_X: int = GAME_FIELD_WIDTH - 1
+MAX_Y: int = GAME_FIELD_HEIGHT - 1
+PLAYER_SIDE_HEIGHT: int = 4
+PHARAOH_COORDINATES: Tuple[int, int] = (10, MAX_Y - 3)
+GUARD_COORDINATES: List[Tuple[int, int]] = [(7, MAX_Y - 3), (13, MAX_Y - 3)]
+MAIN_WARRIOR_LIST_COORDINATES: Tuple[int, int] = (23, MAX_Y - 5)
 
 class deck(Enum):
     WARRIOR = auto()
     BANDAGE = auto()
     BUILDING = auto()
 
-class PlayerManager():
-    close_game = False
-    player_num = 0
-    my_turn = False
-    my_entities = {} # the structure of my_entities is as follows: my_entities[(x, y)] = Entity object
-    main_warrior_list = CardList(WarriorCard)
-    received_entities = {}
-    footer = ""
-    second_player_joined = False
+class PlayerManager:
+    close_game: bool = False
+    player_num: int = 0
+    my_turn: bool = False
+    my_entities: Dict[Tuple[int, int], Entity] = {} # (x, y) is used as a key
+    main_warrior_list: CardList = CardList(WarriorCard)
+    received_entities: Dict[Tuple[int, int], Entity] = {}
+    footer: str = ""
+    second_player_joined: bool = False
 
-def add_new_entity(entity_string, coords):
+def add_new_entity(entity: Entity, coords: Tuple[int, int] | List[Tuple[int, int]]) -> None:
     if isinstance(coords, list):
         for coords_pair in coords:
-            PlayerManager.my_entities[coords_pair] = entity_string
+            PlayerManager.my_entities[coords_pair] = entity
     else:
-        PlayerManager.my_entities[coords] = entity_string
+        PlayerManager.my_entities[coords] = entity
 
-def display_game_field():
+def display_game_field() -> None:
     for y in range(0, GAME_FIELD_HEIGHT):
         x = 0
         while x < GAME_FIELD_WIDTH:
-            entity = PlayerManager.my_entities.get((x, y)) or PlayerManager.received_entities.get((x, y))
+            entity: Entity | None = PlayerManager.my_entities.get((x, y)) or PlayerManager.received_entities.get((x, y))
             if entity:
                 print(entity, end='')
                 x += len(entity.content)
@@ -56,12 +56,12 @@ def display_game_field():
         print()
     print(Entity(PlayerManager.footer))
 
-def refresh_screen():
+def refresh_screen() -> None:
     system('cls')
     display_game_field()
 
-def send_public_entities():
-    public_entities = {}
+def send_public_entities() -> None:
+    public_entities: Dict[Tuple[int, int], Entity] = {}
     for entity_with_coords in PlayerManager.my_entities.items():
         if entity_with_coords[1].public:
             if isinstance(entity_with_coords[1], CardList):
@@ -71,10 +71,10 @@ def send_public_entities():
     sendall_with_end(s, SOCKET_SHARED_ENTITIES_UPDATE)
     sendall_with_end(s, pickle.dumps(public_entities))
 
-def receive_public_entities():
-    encoded_data = recvall(s)
+def receive_public_entities() -> int | None:
+    encoded_data: bytes = recvall(s)
     if encoded_data == SOCKET_SHARED_ENTITIES_UPDATE:
-        received_entities = pickle.loads(recvall(s))
+        received_entities: Dict[Tuple[int, int], Entity] = pickle.loads(recvall(s))
         for entity_with_coords in received_entities.items():
             PlayerManager.received_entities[(entity_with_coords[0][0], abs(entity_with_coords[0][1]-MAX_Y))] = entity_with_coords[1] # reverse y coordinate and add to the received entity list
         refresh_screen()
@@ -83,11 +83,11 @@ def receive_public_entities():
         PlayerManager.my_turn = True
         return 0
 
-def end_turn():
+def end_turn() -> None:
     sendall_with_end(s, SOCKET_YOUR_TURN)
     PlayerManager.my_turn = False
 
-def draw_a_card(from_deck, to_cardlist, public):
+def draw_a_card(from_deck: deck, to_cardlist: CardList, public: bool) -> None:
     match from_deck:
         case deck.WARRIOR:
             to_cardlist.append(WarriorCard(face_values.NUM1, colors.GREEN, public))
@@ -103,12 +103,12 @@ keyboard.wait('space')
 system('cls')
 print("Connecting to the server...")
 
-s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
 try:
     s.connect((HOST, PORT))
     sendall_with_end(s, SOCKET_CONNECTION_ESTABLISHED)
-    data = recvall(s) # receive SOCKET_CONNECTION_ESTABLISHED or SOCKET_LOBBY_FULL
+    data: bytes = recvall(s) # receive SOCKET_CONNECTION_ESTABLISHED or SOCKET_LOBBY_FULL
     if data == SOCKET_LOBBY_FULL:
         system('cls')
         print("The game has already started, please wait until it is finished. Press spacebar to exit.")
@@ -151,6 +151,7 @@ try:
         else:
             while receive_public_entities():
                 pass
+
 except (ConnectionRefusedError, TimeoutError, ConnectionResetError):
     system('cls') 
     print(("Your opponent has disconnected, unable to continue." if PlayerManager.second_player_joined else "Server is offline, unable to connect.") + " Press spacebar to exit.")

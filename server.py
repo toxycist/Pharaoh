@@ -1,16 +1,16 @@
 import time
 from shared_definitions import *
 
-HOST = ''
-PORT = 1717
+HOST: str = ''
+PORT: int = 1717
 
-connections = {}
+connections: Dict[Tuple[socket.socket, Any], int] = {}
 
-def poke_the_client(conn, player_num):
+def poke_the_client(conn: socket.socket, player_num: int) -> None:
     while True:
         time.sleep(0.5)
         if conn.fileno() == -1:
-            # if len(collections) == 0 it means the dictionary is being cleaned up, else just a normal disconnection
+            # if len(connections) == 0 it means the dictionary is being cleaned up, else just a normal disconnection
             if len(connections) == 0:
                 print(f"{addr} [PLAYER {player_num}] terminated.")
             else:
@@ -20,12 +20,12 @@ def poke_the_client(conn, player_num):
                 connections.clear()
             return
 
-def reject_client(conn, addr):
+def reject_client(conn: socket.socket, addr: Any) -> None:
     print(f"{addr} connected. Lobby is full, rejecting...")
     with conn:
         try:
             sendall_with_end(conn, SOCKET_LOBBY_FULL)
-            data = 0
+            data: bytes = b""
             while data != b"":
                 data = conn.recv(1024) # wait until the client disconnects
             return
@@ -33,30 +33,30 @@ def reject_client(conn, addr):
             print(f"{addr} disconnected")
             return
 
-def handle_client(conn, addr):
-    player_num = connections[(conn, addr)]
+def handle_client(conn: socket.socket, addr: Any) -> None:
+    player_num: int = connections[(conn, addr)]
 
-    poke_the_client_thread = threading.Thread(target=poke_the_client, args=(conn, player_num))
+    poke_the_client_thread: threading.Thread = threading.Thread(target=poke_the_client, args=(conn, player_num))
     poke_the_client_thread.start()
 
     print(f"{addr} [PLAYER {player_num}] connected")
     with conn:
         try:
-            other_player = None
+            other_player: socket.socket | None = None
             while True:
-                encoded_data = recvall(conn)
-                decoded_data = encoded_data.decode()
+                encoded_data: bytes = recvall(conn)
+                decoded_data: str = encoded_data.decode()
                 print(f"{addr} [PLAYER {player_num}]: {decoded_data}")
                 if encoded_data == SOCKET_CONNECTION_ESTABLISHED:
                     sendall_with_end(conn, SOCKET_CONNECTION_ESTABLISHED)
                     sendall_with_end(conn, player_num.to_bytes())
                     connections[(conn, addr)] = "ready"
                 elif encoded_data == SOCKET_SHARED_ENTITIES_UPDATE:
-                    public_entities = pickle.loads(recvall(conn))
+                    public_entities: Dict[Tuple[int, int], Entity] = pickle.loads(recvall(conn))
                     print(f"{addr} [PLAYER {player_num}] Received entities: ", end = "")
                     print(public_entities)
 
-                    entities_sent = False
+                    entities_sent: bool = False
                     while not entities_sent:
                         for other_conn_addr in list(connections.keys()):
                             if other_conn_addr != (conn, addr) and connections[other_conn_addr] == "ready":
@@ -75,11 +75,13 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     print(f"Listening on {HOST}:{PORT}")
 
     while True:
+        conn: socket.socket
+        addr: Any
         conn, addr = s.accept()
         if len(connections) < 2:
             connections[(conn, addr)] = (len(connections) + 1) # set player number
-            client_thread = threading.Thread(target=handle_client, args=(conn, addr))
+            client_thread: threading.Thread = threading.Thread(target=handle_client, args=(conn, addr))
             client_thread.start()
         else:
-            rejection_thread = threading.Thread(target=reject_client, args=(conn, addr))
+            rejection_thread: threading.Thread = threading.Thread(target=reject_client, args=(conn, addr))
             rejection_thread.start()
