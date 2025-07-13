@@ -90,7 +90,7 @@ def end_turn() -> None:
 def draw_a_card(from_deck: deck, to_cardlist: CardList, public: bool) -> None:
     match from_deck:
         case deck.WARRIOR:
-            to_cardlist.append(WarriorCard(face_values.NUM1, colors.GREEN, public))
+            to_cardlist.append(WarriorCard(power = 0, public = True))
 
 add_new_entity(Entity("╭" + "─" * (GAME_FIELD_WIDTH - 2) + "╮"), (MIN_X, MIN_Y))
 for y in range(1, GAME_FIELD_HEIGHT - 1):
@@ -126,7 +126,7 @@ try:
     elif PlayerManager.player_num == 2:
         add_new_entity(Entity("-" * (GAME_FIELD_WIDTH - 2), colors.YELLOW), (1, MAX_Y - (PLAYER_SIDE_HEIGHT + 2)))
         add_new_entity(Entity("-" * (GAME_FIELD_WIDTH - 2), colors.BLUE), (1, PLAYER_SIDE_HEIGHT + 2))
-    add_new_entity(Entity(face_values.PHARAOH, colors.WHITE, public=True), PHARAOH_COORDINATES)
+    add_new_entity(Entity(PHARAOH, colors.WHITE, public=True), PHARAOH_COORDINATES)
     add_new_entity(GuardCard(), GUARD_COORDINATES[0])
     add_new_entity(GuardCard(), GUARD_COORDINATES[1])
 
@@ -141,9 +141,12 @@ try:
 
     while not PlayerManager.close_game:
         if PlayerManager.my_turn:
+            
+            ### TEST
             keyboard.wait('space')
-
             draw_a_card(from_deck = deck.WARRIOR, to_cardlist = PlayerManager.main_warrior_list, public = True)
+            random.choice(PlayerManager.main_warrior_list).upgrade_value()
+            ###
 
             refresh_screen()
             send_public_entities()

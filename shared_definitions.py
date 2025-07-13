@@ -17,7 +17,6 @@ class colors:
     ENDC: str = '\033[0m'
 
 class face_values:
-    PHARAOH: str = "↰"
     HOSPITAL: str = "HOS☩"
     SUPER_BARRACKS: str = "SUPⵌ"
     BARRACKS: str = "ⵌ"
@@ -34,6 +33,7 @@ class face_values:
     NUM7: str = "7"
     NUM8: str = "8"
     NUM9: str = "9"
+PHARAOH: str = "↰"
 
 main_colors: List[str] = [colors.GREEN, colors.BLUE, colors.YELLOW, colors.RED]
 numerical_face_values: List[str] = [
@@ -48,7 +48,8 @@ class Entity:
     def __init__(self, content: str, color: str = colors.GRAY, public: bool = False) -> None:
         if not hasattr(self, 'content'):
             self.content: str = content
-        self.color: str = color
+        if not hasattr(self, 'color'):
+            self.color: str = color
         self.public: bool = public
 
     def __repr__(self) -> str:
@@ -69,35 +70,33 @@ class Entity:
 class WarriorCard(Entity):
     type_name: str = "Warriors"
     __id_counter: int = 0
-    def __init__(self, face_value: str, level: str, public: bool = False) -> None:
-        super(WarriorCard, self).__init__(face_value, level, public)
+    def __init__(self, power: int, public: bool = False) -> None:
+        self.power: int = power
+        super(WarriorCard, self).__init__(self.content, self.color, public)
         self.id: int = type(self).__id_counter
         type(self).__id_counter += 1
-        if face_value in numerical_face_values:
-            self.power: int = (main_colors.index(self.color) * len(numerical_face_values)) + numerical_face_values.index(self.content)
-
-    def __refresh_string_and_color(self) -> int:
-        try:
-            self.color = main_colors[self.power // len(numerical_face_values)]
-            self.content = numerical_face_values[self.power % len(numerical_face_values)]
-            return 1
-        except IndexError:
-            self.power = MAX_WARRIOR_CARD_POWER
-            return 0
     
-    def upgrade_level(self, by: int = 1) -> int:
-        self.power += by * len(numerical_face_values)
-        return self.__refresh_string_and_color()
+    @property
+    def color(self) -> str:
+        return main_colors[self.power // len(numerical_face_values)]
+    
+    @property
+    def content(self) -> str:
+        return numerical_face_values[self.power % len(numerical_face_values)]
+    
+    def upgrade_level(self, by: int = 1) -> None:
+        if self.power <= MAX_WARRIOR_CARD_POWER:
+            self.power += by * len(numerical_face_values)
 
-    def upgrade_value(self, by: int = 1) -> int:
-        self.power += by
-        return self.__refresh_string_and_color()
+    def upgrade_value(self, by: int = 1) -> None:
+        if self.power <= MAX_WARRIOR_CARD_POWER:
+            self.power += by
 
 class GuardCard(WarriorCard):
     type_name: str = "Guards"
     __id_counter: int = 0
-    def __init__(self, face_value: str = face_values.NUM1, level: str = colors.GREEN, public: bool = True) -> None:
-        super(GuardCard, self).__init__(face_value, level, public)
+    def __init__(self, power: int = 0, public: bool = True) -> None:
+        super(GuardCard, self).__init__(power, public)
 
 def remove_color_codes(s: str) -> str:
     return re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]').sub('', s)
@@ -137,8 +136,16 @@ class CardList(Entity):
     def __getitem__(self, index: int) -> Entity:
         return self.__cards[index]
     
+    def __bool__(self) -> bool:
+        return self is not None
+    
     def __len__(self) -> int:
-        return len(self.content)
+        return len(self.__cards)
+    
+    def __contains__(self, card: Entity) -> bool:
+        if not isinstance(card, self.card_type):
+            return False
+        return any(c.power == card.power for c in self.__cards)
 
 SOCKET_END_MSG: bytes = b"<END>"
 SOCKET_CONNECTION_ESTABLISHED: bytes = b"CONNECTION ESTABLISHED"
