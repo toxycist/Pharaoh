@@ -42,7 +42,8 @@ numerical_face_values: List[str] = [
     face_values.NUM9, face_values.PLUS_2
 ]
 
-MAX_WARRIOR_CARD_POWER: int = len(main_colors) * len(numerical_face_values) - 1
+WARRIOR_CARDS_COUNT: int = len(numerical_face_values) * len(main_colors)
+MAX_WARRIOR_CARD_POWER: int = WARRIOR_CARDS_COUNT - 1
 
 class Entity:
     def __init__(self, content: str, color: str = colors.GRAY, public: bool = False) -> None:

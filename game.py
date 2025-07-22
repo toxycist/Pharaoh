@@ -4,6 +4,7 @@ from os import system, getenv
 import random
 from shared_definitions import *
 import sys
+import math
 
 dotenv.load_dotenv()
 HOST: str | None = getenv('IP')
@@ -87,10 +88,19 @@ def end_turn() -> None:
     sendall_with_end(s, SOCKET_YOUR_TURN)
     PlayerManager.my_turn = False
 
+##### [DIFFICULT ZONE] PROBABILITIES
+def triangular_number(n: int) -> int:
+    return (n**2 + n) / 2 # factorial, but with sum
+
+def get_triangular_sector(n: int) -> int:
+    return int((math.sqrt(1 + 8 * n) - 1) // 2) + 1 # this formula returns the number m, such that argument number n is greater than or equal to the m-th triangular number
+
 def draw_a_card(from_deck: deck, to_cardlist: CardList, public: bool) -> None:
     match from_deck:
         case deck.WARRIOR:
-            to_cardlist.append(WarriorCard(power = 0, public = True))
+            picked_card_power: int = abs(WARRIOR_CARDS_COUNT - get_triangular_sector(random.randint(1, triangular_number(WARRIOR_CARDS_COUNT)))) # reversing the triangular sector number is needed because cards with little power should be more common
+            to_cardlist.append(WarriorCard(power = picked_card_power, public = True))
+#####
 
 add_new_entity(Entity("╭" + "─" * (GAME_FIELD_WIDTH - 2) + "╮"), (MIN_X, MIN_Y))
 for y in range(1, GAME_FIELD_HEIGHT - 1):
@@ -144,8 +154,10 @@ try:
             
             ### TEST
             keyboard.wait('space')
-            draw_a_card(from_deck = deck.WARRIOR, to_cardlist = PlayerManager.main_warrior_list, public = True)
-            random.choice(PlayerManager.main_warrior_list).upgrade_value()
+            for i in range(0, 100):
+                draw_a_card(from_deck = deck.WARRIOR, to_cardlist = PlayerManager.main_warrior_list, public = True)
+                refresh_screen()
+            # random.choice(PlayerManager.main_warrior_list).upgrade_value()
             ###
 
             refresh_screen()
