@@ -35,15 +35,7 @@ class face_values:
     NUM9: str = "9"
 PHARAOH: str = "↰"
 
-main_colors: List[str] = [colors.GREEN, colors.BLUE, colors.YELLOW, colors.RED]
-numerical_face_values: List[str] = [
-    face_values.NUM1, face_values.NUM2, face_values.NUM3, face_values.NUM4,
-    face_values.NUM5, face_values.NUM6, face_values.NUM7, face_values.NUM8,
-    face_values.NUM9, face_values.PLUS_2
-]
-
-WARRIOR_CARDS_COUNT: int = len(numerical_face_values) * len(main_colors)
-MAX_WARRIOR_CARD_POWER: int = WARRIOR_CARDS_COUNT - 1
+level_colors: List[str] = [colors.GREEN, colors.BLUE, colors.YELLOW, colors.RED]
 
 class Entity:
     def __init__(self, content: str, color: str = colors.GRAY, public: bool = False) -> None:
@@ -57,7 +49,7 @@ class Entity:
         return_str: str = ''
         if self.color == colors.RAINBOW:
             for i in range(0, len(self.content)):
-                return_str += (main_colors[i%4] + self.content[i] + colors.ENDC)
+                return_str += (level_colors[i%4] + self.content[i] + colors.ENDC)
         elif self.color == colors.NONE:
             return_str = self.content
         else:
@@ -68,36 +60,51 @@ class Entity:
     def switch_public(self) -> None:
         self.public = not self.public
 
-class WarriorCard(Entity):
-    type_name: str = "Warriors"
-    __id_counter: int = 0
+class Card(Entity):
+    FACE_VALUES: List[str] = [] # MANDATORY OVERRIDE
+    type_name: str = "Cards"
+
+    def __init_subclass__(cls):
+        super().__init_subclass__()
+        cls.COUNT = len(cls.FACE_VALUES) * len(level_colors)
+        cls.MAX_POWER = cls.COUNT - 1
+
     def __init__(self, power: int, public: bool = False) -> None:
         self.power: int = power
-        super(WarriorCard, self).__init__(self.content, self.color, public)
-        self.id: int = type(self).__id_counter
-        type(self).__id_counter += 1
+        super().__init__(self.content, self.color, public)
     
     @property
     def color(self) -> str:
-        return main_colors[self.power // len(numerical_face_values)]
+        return level_colors[self.power // len(type(self).FACE_VALUES)]
     
     @property
     def content(self) -> str:
-        return numerical_face_values[self.power % len(numerical_face_values)]
+        return type(self).FACE_VALUES[self.power % len(type(self).FACE_VALUES)]
     
     def upgrade_level(self, by: int = 1) -> None:
-        if self.power <= MAX_WARRIOR_CARD_POWER:
-            self.power += by * len(numerical_face_values)
+        if self.power <= type(self).MAX_POWER:
+            self.power += by * len(type(self).FACE_VALUES)
 
     def upgrade_value(self, by: int = 1) -> None:
-        if self.power <= MAX_WARRIOR_CARD_POWER:
+        if self.power <= type(self).MAX_POWER:
             self.power += by
+
+class BandageCard(Card):
+    FACE_VALUES: List[str] = [face_values.FACE_VALUE_BANDAGE, face_values.LEVEL_BANDAGE, face_values.COMBINED_BANDAGE]
+    type_name: str = "Bandages"
+
+class WarriorCard(Card):
+    FACE_VALUES: List[str] = [
+        face_values.NUM1, face_values.NUM2, face_values.NUM3, face_values.NUM4,
+        face_values.NUM5, face_values.NUM6, face_values.NUM7, face_values.NUM8,
+        face_values.NUM9, face_values.PLUS_2
+    ]
+    type_name: str = "Warriors"
 
 class GuardCard(WarriorCard):
     type_name: str = "Guards"
-    __id_counter: int = 0
     def __init__(self, power: int = 0, public: bool = True) -> None:
-        super(GuardCard, self).__init__(power, public)
+        super().__init__(power, public)
 
 def remove_color_codes(s: str) -> str:
     return re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]').sub('', s)
@@ -106,7 +113,7 @@ class CardList(Entity):
     def __init__(self, card_type: Type[Entity], cards: List[Entity] | None = None, public: bool = True) -> None:
         self.card_type: Type[Entity] = card_type
         self.__cards: List[Entity] = cards if cards is not None else []
-        super(CardList, self).__init__(self.content, colors.NONE, public)
+        super().__init__(self.content, colors.NONE, public)
     
     def __repr__(self) -> str:
         string_repr: str = self.card_type.type_name + ":"

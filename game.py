@@ -20,11 +20,7 @@ PLAYER_SIDE_HEIGHT: int = 4
 PHARAOH_COORDINATES: Tuple[int, int] = (10, MAX_Y - 3)
 GUARD_COORDINATES: List[Tuple[int, int]] = [(7, MAX_Y - 3), (13, MAX_Y - 3)]
 MAIN_WARRIOR_LIST_COORDINATES: Tuple[int, int] = (23, MAX_Y - 5)
-
-class deck(Enum):
-    WARRIOR = auto()
-    BANDAGE = auto()
-    BUILDING = auto()
+MAIN_BANDAGE_LIST_COORDINATES: Tuple[int, int] = (23, MAX_Y - 3)
 
 class PlayerManager:
     close_game: bool = False
@@ -32,6 +28,7 @@ class PlayerManager:
     my_turn: bool = False
     my_entities: Dict[Tuple[int, int], Entity] = {} # (x, y) is used as a key
     main_warrior_list: CardList = CardList(WarriorCard)
+    main_bandage_list: CardList = CardList(BandageCard)
     received_entities: Dict[Tuple[int, int], Entity] = {}
     footer: str = ""
     second_player_joined: bool = False
@@ -95,11 +92,20 @@ def triangular_number(n: int) -> int:
 def get_triangular_sector(n: int) -> int:
     return int((math.sqrt(1 + 8 * n) - 1) // 2) + 1 # this formula returns the number m, such that argument number n is greater than or equal to the m-th triangular number
 
-def draw_a_card(from_deck: deck, to_cardlist: CardList, public: bool) -> None:
-    match from_deck:
-        case deck.WARRIOR:
-            picked_card_power: int = abs(WARRIOR_CARDS_COUNT - get_triangular_sector(random.randint(1, triangular_number(WARRIOR_CARDS_COUNT)))) # reversing the triangular sector number is needed because cards with little power should be more common
-            to_cardlist.append(WarriorCard(power = picked_card_power, public = True))
+face_value = level = combined = 0
+
+def draw_a_card(card_type: type[Entity], to_cardlist: CardList, public: bool) -> None:
+    picked_card_power: int = abs(card_type.COUNT - get_triangular_sector(random.randint(1, triangular_number(card_type.COUNT)))) # reversing the triangular sector number is needed because weak cards should be more common
+    to_cardlist.append(card_type(power = picked_card_power, public = True))
+
+    global face_value, level, combined
+    match picked_card_power:
+        case 0:
+            face_value += 1
+        case 1:
+            level += 1
+        case 2:
+            combined += 1
 #####
 
 add_new_entity(Entity("╭" + "─" * (GAME_FIELD_WIDTH - 2) + "╮"), (MIN_X, MIN_Y))
@@ -141,6 +147,7 @@ try:
     add_new_entity(GuardCard(), GUARD_COORDINATES[1])
 
     add_new_entity(PlayerManager.main_warrior_list, MAIN_WARRIOR_LIST_COORDINATES)
+    add_new_entity(PlayerManager.main_bandage_list, MAIN_BANDAGE_LIST_COORDINATES)
 
     refresh_screen()
 
@@ -155,12 +162,13 @@ try:
             ### TEST
             keyboard.wait('space')
             for i in range(0, 100):
-                draw_a_card(from_deck = deck.WARRIOR, to_cardlist = PlayerManager.main_warrior_list, public = True)
+                if i % 2 == 0:
+                    draw_a_card(card_type = WarriorCard, to_cardlist = PlayerManager.main_warrior_list, public = True)
+                else:
+                    draw_a_card(card_type = BandageCard, to_cardlist = PlayerManager.main_bandage_list, public = True)
                 refresh_screen()
-            # random.choice(PlayerManager.main_warrior_list).upgrade_value()
             ###
 
-            refresh_screen()
             send_public_entities()
             end_turn()
         else:
