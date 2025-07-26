@@ -9,7 +9,7 @@ class colors:
     NONE: None = None
     GRAY: str = '\033[90m'
     WHITE: str = '\033[37m'
-    RAINBOW: str = ''
+    RAINBOW: str = "RAINBOW"
     GREEN: str = '\033[92m'
     BLUE: str = '\033[94m'
     YELLOW: str = '\033[93m'
@@ -17,9 +17,9 @@ class colors:
     ENDC: str = '\033[0m'
 
 class face_values:
-    HOSPITAL: str = "HOS☩"
-    SUPER_BARRACKS: str = "SUPⵌ"
+    HOSPITAL: str = "☩"
     BARRACKS: str = "ⵌ"
+
     LEVEL_BANDAGE: str = "☛"
     FACE_VALUE_BANDAGE: str = "+"
     COMBINED_BANDAGE: str = "⇄"
@@ -34,8 +34,9 @@ class face_values:
     NUM8: str = "8"
     NUM9: str = "9"
 PHARAOH: str = "↰"
+SUPER_BUILDING_PREFIX: str = "SUP"
 
-level_colors: List[str] = [colors.GREEN, colors.BLUE, colors.YELLOW, colors.RED]
+LEVEL_COLORS: List[str] = [colors.GREEN, colors.BLUE, colors.YELLOW, colors.RED]
 
 class Entity:
     def __init__(self, content: str, color: str = colors.GRAY, public: bool = False) -> None:
@@ -49,7 +50,7 @@ class Entity:
         return_str: str = ''
         if self.color == colors.RAINBOW:
             for i in range(0, len(self.content)):
-                return_str += (level_colors[i%4] + self.content[i] + colors.ENDC)
+                return_str += (LEVEL_COLORS[i%4] + self.content[i] + colors.ENDC)
         elif self.color == colors.NONE:
             return_str = self.content
         else:
@@ -62,11 +63,12 @@ class Entity:
 
 class Card(Entity):
     FACE_VALUES: List[str] = [] # MANDATORY OVERRIDE
-    type_name: str = "Cards"
+    POSSIBLE_COLORS: List[str] = LEVEL_COLORS
+    TYPE_NAME: str = "Cards"
 
-    def __init_subclass__(cls):
+    def __init_subclass__(cls) -> None:
         super().__init_subclass__()
-        cls.COUNT = len(cls.FACE_VALUES) * len(level_colors)
+        cls.COUNT = len(cls.FACE_VALUES) * len(cls.POSSIBLE_COLORS)
         cls.MAX_POWER = cls.COUNT - 1
 
     def __init__(self, power: int, public: bool = False) -> None:
@@ -75,23 +77,64 @@ class Card(Entity):
     
     @property
     def color(self) -> str:
-        return level_colors[self.power // len(type(self).FACE_VALUES)]
+        return type(self).POSSIBLE_COLORS[self.power // len(type(self).FACE_VALUES)]
     
     @property
     def content(self) -> str:
         return type(self).FACE_VALUES[self.power % len(type(self).FACE_VALUES)]
     
-    def upgrade_level(self, by: int = 1) -> None:
-        if self.power <= type(self).MAX_POWER:
-            self.power += by * len(type(self).FACE_VALUES)
+    def __eq__(self, other):
+        return type(self) == type(other) and self.power == other.power
 
-    def upgrade_value(self, by: int = 1) -> None:
-        if self.power <= type(self).MAX_POWER:
-            self.power += by
+    def __hash__(self):
+        return hash((type(self), self.power))
+    
+    def upgrade_level(self, by: int = 1) -> 'Card':
+        self.power = min(self.power + by * len(type(self).FACE_VALUES), type(self).MAX_POWER)
+        return self
+
+    def upgrade_value(self, by: int = 1) -> 'Card':
+        self.power = min(self.power + by, type(self).MAX_POWER)
 
 class BandageCard(Card):
     FACE_VALUES: List[str] = [face_values.FACE_VALUE_BANDAGE, face_values.LEVEL_BANDAGE, face_values.COMBINED_BANDAGE]
-    type_name: str = "Bandages"
+    TYPE_NAME: str = "Bandages"
+
+class BuildingCard(Card): #TODO: make color and content calculation from Card class work with super buildings
+    FACE_VALUES: List[str] = [face_values.HOSPITAL, face_values.BARRACKS]
+    POSSIBLE_COLORS: List[str] = LEVEL_COLORS
+    TYPE_NAME: str = "Buildings"
+
+    def __init__(self, building_type: str, level: str = colors.GREEN, public: bool = True) -> None:
+        if building_type not in type(self).FACE_VALUES:
+            raise ValueError(f"Invalid face_value: {building_type!r}. Must be one of {type(self).FACE_VALUES}")
+        if level not in type(self).POSSIBLE_COLORS:
+            raise ValueError(f"Invalid level: {level!r}. Must be one of {type(self).POSSIBLE_COLORS}")
+        
+        face_value_index: int = type(self).FACE_VALUES.index(building_type)
+        face_values_count: int = len(type(self).FACE_VALUES)
+        level_index: int = type(self).POSSIBLE_COLORS.index(level)
+        super().__init__(level_index * face_values_count + face_value_index, public)
+    
+    def upgrade_level(self, by: int = 1) -> 'BuildingCard': # the return value of this method should always be reassigned: building_card = building_card.upgrade_level()
+        max_level = len(type(self).POSSIBLE_COLORS) - 1
+        current_level = type(self).POSSIBLE_COLORS.index(self.color)
+
+        if current_level == max_level:
+            return SuperBuildingCard(self.content, self.public)
+        
+        super().upgrade_level(by)
+        return self
+
+class SuperBuildingCard(BuildingCard):
+    FACE_VALUES: List[str] = [SUPER_BUILDING_PREFIX + face_values.HOSPITAL, SUPER_BUILDING_PREFIX + face_values.BARRACKS]
+    POSSIBLE_COLORS: List[str] = [colors.RAINBOW]
+
+    def upgrade_level(self) -> None:
+        raise NotImplementedError(f"upgrade_level method is not defined for objects of class {type(self)}")
+
+    def __init__(self, building_type: str, public: bool = True) -> None:
+        Card.__init__(self, type(self).FACE_VALUES.index(SUPER_BUILDING_PREFIX + building_type), public)
 
 class WarriorCard(Card):
     FACE_VALUES: List[str] = [
@@ -99,10 +142,10 @@ class WarriorCard(Card):
         face_values.NUM5, face_values.NUM6, face_values.NUM7, face_values.NUM8,
         face_values.NUM9, face_values.PLUS_2
     ]
-    type_name: str = "Warriors"
+    TYPE_NAME: str = "Warriors"
 
 class GuardCard(WarriorCard):
-    type_name: str = "Guards"
+    TYPE_NAME: str = "Guards"
     def __init__(self, power: int = 0, public: bool = True) -> None:
         super().__init__(power, public)
 
@@ -110,13 +153,13 @@ def remove_color_codes(s: str) -> str:
     return re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]').sub('', s)
 
 class CardList(Entity):
-    def __init__(self, card_type: Type[Entity], cards: List[Entity] | None = None, public: bool = True) -> None:
-        self.card_type: Type[Entity] = card_type
-        self.__cards: List[Entity] = cards if cards is not None else []
+    def __init__(self, card_type: Type[Card], cards: List[Card] | None = None, public: bool = True) -> None:
+        self.card_type: Type[Card] = card_type
+        self.__cards: List[Card] = cards if cards is not None else []
         super().__init__(self.content, colors.NONE, public)
     
     def __repr__(self) -> str:
-        string_repr: str = self.card_type.type_name + ":"
+        string_repr: str = self.card_type.TYPE_NAME + ":"
         if self.__cards:
             for card in self.__cards:
                 string_repr += " " + repr(card)
@@ -129,19 +172,19 @@ class CardList(Entity):
         return remove_color_codes(repr(self))
     
     def get_public_cards(self) -> 'CardList':
-        public_cards: List[Entity] = [public_card for public_card in self.__cards if public_card.public]
+        public_cards: List[Card] = [public_card for public_card in self.__cards if public_card.public]
         return CardList(self.card_type, public_cards, public = True)
     
-    def remove(self, card: Entity) -> None:
+    def remove(self, card: Card) -> None:
         self.__cards.remove(card)
     
-    def append(self, card: Entity) -> None:
+    def append(self, card: Card) -> None:
         self.__cards.append(card)
     
-    def __setitem__(self, index: int, card: Entity) -> None:
+    def __setitem__(self, index: int, card: Card) -> None:
         self.__cards[index] = card
 
-    def __getitem__(self, index: int) -> Entity:
+    def __getitem__(self, index: int) -> Card:
         return self.__cards[index]
     
     def __bool__(self) -> bool:
@@ -150,10 +193,10 @@ class CardList(Entity):
     def __len__(self) -> int:
         return len(self.__cards)
     
-    def __contains__(self, card: Entity) -> bool:
+    def __contains__(self, card: Card) -> bool:
         if not isinstance(card, self.card_type):
             return False
-        return any(c.power == card.power for c in self.__cards)
+        return any(c.power == card.power and type(c) == type(card) for c in self.__cards)
 
 SOCKET_END_MSG: bytes = b"<END>"
 SOCKET_CONNECTION_ESTABLISHED: bytes = b"CONNECTION ESTABLISHED"

@@ -21,6 +21,7 @@ PHARAOH_COORDINATES: Tuple[int, int] = (10, MAX_Y - 3)
 GUARD_COORDINATES: List[Tuple[int, int]] = [(7, MAX_Y - 3), (13, MAX_Y - 3)]
 MAIN_WARRIOR_LIST_COORDINATES: Tuple[int, int] = (23, MAX_Y - 5)
 MAIN_BANDAGE_LIST_COORDINATES: Tuple[int, int] = (23, MAX_Y - 3)
+MAIN_BUILDING_LIST_COORDINATES: Tuple[int, int] = (23, MAX_Y - 1)
 
 class PlayerManager:
     close_game: bool = False
@@ -29,6 +30,7 @@ class PlayerManager:
     my_entities: Dict[Tuple[int, int], Entity] = {} # (x, y) is used as a key
     main_warrior_list: CardList = CardList(WarriorCard)
     main_bandage_list: CardList = CardList(BandageCard)
+    main_building_list: CardList = CardList(BuildingCard)
     received_entities: Dict[Tuple[int, int], Entity] = {}
     footer: str = ""
     second_player_joined: bool = False
@@ -148,6 +150,7 @@ try:
 
     add_new_entity(PlayerManager.main_warrior_list, MAIN_WARRIOR_LIST_COORDINATES)
     add_new_entity(PlayerManager.main_bandage_list, MAIN_BANDAGE_LIST_COORDINATES)
+    add_new_entity(PlayerManager.main_building_list, MAIN_BUILDING_LIST_COORDINATES)
 
     refresh_screen()
 
@@ -160,15 +163,15 @@ try:
         if PlayerManager.my_turn:
             
             ### TEST
-            keyboard.wait('space')
-            for i in range(0, 100):
-                if i % 2 == 0:
-                    draw_a_card(card_type = WarriorCard, to_cardlist = PlayerManager.main_warrior_list, public = True)
-                else:
-                    draw_a_card(card_type = BandageCard, to_cardlist = PlayerManager.main_bandage_list, public = True)
+            PlayerManager.main_building_list.append(BuildingCard(face_values.HOSPITAL))
+            refresh_screen()
+
+            while SuperBuildingCard(face_values.HOSPITAL) not in PlayerManager.main_building_list:
+                keyboard.wait('space')
+                PlayerManager.main_building_list[0] = PlayerManager.main_building_list[0].upgrade_level()
                 refresh_screen()
             ###
-
+            
             send_public_entities()
             end_turn()
         else:
