@@ -8,4 +8,4 @@
 
 # How to run
 
-<code>server.py</code> is the server hosting the game. <code>game.py</code> is the client/player. Server and one of the clients can be ran on the same device, the second client requires a separate device.
+<code>server.py</code> is the server hosting the game. <code>game.py</code> is the client/player. The server and one of the clients can be ran on the same device, the second client requires a separate device.

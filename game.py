@@ -87,27 +87,16 @@ def end_turn() -> None:
     sendall_with_end(s, SOCKET_YOUR_TURN)
     PlayerManager.my_turn = False
 
-##### [DIFFICULT ZONE] PROBABILITIES
+##### [DIFFICULT ZONE] PROBABILITIES ##### TODO: fix #1
 def triangular_number(n: int) -> int:
     return (n**2 + n) / 2 # factorial, but with sum
 
 def get_triangular_sector(n: int) -> int:
     return int((math.sqrt(1 + 8 * n) - 1) // 2) + 1 # this formula returns the number m, such that argument number n is greater than or equal to the m-th triangular number
 
-face_value = level = combined = 0
-
 def draw_a_card(card_type: type[Entity], to_cardlist: CardList, public: bool) -> None:
     picked_card_power: int = abs(card_type.COUNT - get_triangular_sector(random.randint(1, triangular_number(card_type.COUNT)))) # reversing the triangular sector number is needed because weak cards should be more common
     to_cardlist.append(card_type(power = picked_card_power, public = True))
-
-    global face_value, level, combined
-    match picked_card_power:
-        case 0:
-            face_value += 1
-        case 1:
-            level += 1
-        case 2:
-            combined += 1
 #####
 
 add_new_entity(Entity("╭" + "─" * (GAME_FIELD_WIDTH - 2) + "╮"), (MIN_X, MIN_Y))
