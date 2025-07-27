@@ -27,26 +27,28 @@ class PlayerManager:
     close_game: bool = False
     player_num: int = 0
     my_turn: bool = False
-    my_entities: Dict[Tuple[int, int], Entity] = {} # (x, y) is used as a key
+    my_entities: Dict[Tuple[int, int], List[Entity]] = {} # (x, y) is used as a key
+    received_entities: Dict[Tuple[int, int], List[Entity]] = {}
     main_warrior_list: CardList = CardList(WarriorCard)
     main_bandage_list: CardList = CardList(BandageCard)
     main_building_list: CardList = CardList(BuildingCard)
-    received_entities: Dict[Tuple[int, int], Entity] = {}
     footer: str = ""
     second_player_joined: bool = False
 
 def add_new_entity(entity: Entity, coords: Tuple[int, int] | List[Tuple[int, int]]) -> None:
     if isinstance(coords, list):
         for coords_pair in coords:
-            PlayerManager.my_entities[coords_pair] = entity
+            PlayerManager.my_entities.setdefault(coords_pair, []).append(entity)
     else:
-        PlayerManager.my_entities[coords] = entity
+        PlayerManager.my_entities.setdefault(coords, []).append(entity)
 
 def display_game_field() -> None:
     for y in range(0, GAME_FIELD_HEIGHT):
         x = 0
         while x < GAME_FIELD_WIDTH:
-            entity: Entity | None = PlayerManager.my_entities.get((x, y)) or PlayerManager.received_entities.get((x, y))
+            #get methods return entity lists. then the lists are checked for being None and if they are not None, their entities are taken
+            candidate_entities: List[Entity] = [entity for entity_list in [PlayerManager.my_entities.get((x, y)), PlayerManager.received_entities.get((x, y))] if entity_list is not None for entity in entity_list]
+            entity: Entity = max(candidate_entities, key = lambda e: e.display_priority, default = None)
             if entity:
                 print(entity, end='')
                 x += len(entity.content)
@@ -61,22 +63,25 @@ def refresh_screen() -> None:
     display_game_field()
 
 def send_public_entities() -> None:
-    public_entities: Dict[Tuple[int, int], Entity] = {}
-    for entity_with_coords in PlayerManager.my_entities.items():
-        if entity_with_coords[1].public:
-            if isinstance(entity_with_coords[1], CardList):
-                public_entities[entity_with_coords[0]] = entity_with_coords[1].get_public_cards()
-            else:
-                public_entities[entity_with_coords[0]] = entity_with_coords[1]
+    public_entities: Dict[Tuple[int, int], List[Entity]] = {}
+    for coords, entities in PlayerManager.my_entities.items():
+        for entity in entities:
+            if entity.public:
+                if isinstance(entity, CardList):
+                    public_entities.setdefault(coords, []).append(entity.get_public_cards())
+                else:
+                    public_entities.setdefault(coords, []).append(entity)
     sendall_with_end(s, SOCKET_SHARED_ENTITIES_UPDATE)
     sendall_with_end(s, pickle.dumps(public_entities))
-
+ 
 def receive_public_entities() -> int | None:
     encoded_data: bytes = recvall(s)
     if encoded_data == SOCKET_SHARED_ENTITIES_UPDATE:
-        received_entities: Dict[Tuple[int, int], Entity] = pickle.loads(recvall(s))
-        for entity_with_coords in received_entities.items():
-            PlayerManager.received_entities[(entity_with_coords[0][0], abs(entity_with_coords[0][1]-MAX_Y))] = entity_with_coords[1] # reverse y coordinate and add to the received entity list
+        received_entities: Dict[Tuple[int, int], List[Entity]] = pickle.loads(recvall(s))
+        PlayerManager.received_entities.clear() # clear previously received entities
+        for coords, entities in received_entities.items():
+            lst = PlayerManager.received_entities.setdefault((coords[0], abs(coords[1] - MAX_Y)), []) # reverse y coordinate of the received entity list, create an empty list on these coordinates in PlayerManager.received_entities if it doesn't exist and save the result of set_default() to a temporary variable to prevent performing augmented assignment on the return value of a function
+            lst += [entity for entity in entities] # add each entity from the received entity list to PlayerManager.received_entities[coords]
         refresh_screen()
         return 1
     elif encoded_data == SOCKET_YOUR_TURN:
@@ -154,14 +159,15 @@ try:
             ### TEST
             PlayerManager.main_building_list.append(BuildingCard(face_values.HOSPITAL))
             refresh_screen()
+            send_public_entities()
 
             while SuperBuildingCard(face_values.HOSPITAL) not in PlayerManager.main_building_list:
                 keyboard.wait('space')
                 PlayerManager.main_building_list[0] = PlayerManager.main_building_list[0].upgrade_level()
                 refresh_screen()
+                send_public_entities()
             ###
-            
-            send_public_entities()
+
             end_turn()
         else:
             while receive_public_entities():

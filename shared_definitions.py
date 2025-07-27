@@ -19,7 +19,6 @@ class colors:
 class face_values:
     HOSPITAL: str = "☩"
     BARRACKS: str = "ⵌ"
-
     LEVEL_BANDAGE: str = "☛"
     FACE_VALUE_BANDAGE: str = "+"
     COMBINED_BANDAGE: str = "⇄"
@@ -39,11 +38,12 @@ SUPER_BUILDING_PREFIX: str = "SUP"
 LEVEL_COLORS: List[str] = [colors.GREEN, colors.BLUE, colors.YELLOW, colors.RED]
 
 class Entity:
-    def __init__(self, content: str, color: str = colors.GRAY, public: bool = False) -> None:
+    def __init__(self, content: str, color: str = colors.GRAY, display_priority: int = 0, public: bool = False) -> None:
         if not hasattr(self, 'content'):
             self.content: str = content
         if not hasattr(self, 'color'):
             self.color: str = color
+        self.display_priority = display_priority
         self.public: bool = public
 
     def __repr__(self) -> str:
@@ -73,7 +73,7 @@ class Card(Entity):
 
     def __init__(self, power: int, public: bool = False) -> None:
         self.power: int = power
-        super().__init__(self.content, self.color, public)
+        super().__init__(content= self.content, color = self.color, public = public)
     
     @property
     def color(self) -> str:
@@ -83,7 +83,7 @@ class Card(Entity):
     def content(self) -> str:
         return type(self).FACE_VALUES[self.power % len(type(self).FACE_VALUES)]
     
-    def __eq__(self, other):
+    def __eq__(self, other: 'Card'):
         return type(self) == type(other) and self.power == other.power
 
     def __hash__(self):
@@ -114,7 +114,7 @@ class BuildingCard(Card): #TODO: make color and content calculation from Card cl
         face_value_index: int = type(self).FACE_VALUES.index(building_type)
         face_values_count: int = len(type(self).FACE_VALUES)
         level_index: int = type(self).POSSIBLE_COLORS.index(level)
-        super().__init__(level_index * face_values_count + face_value_index, public)
+        super().__init__(power = level_index * face_values_count + face_value_index, public = public)
     
     def upgrade_level(self, by: int = 1) -> 'BuildingCard': # the return value of this method should always be reassigned: building_card = building_card.upgrade_level()
         max_level = len(type(self).POSSIBLE_COLORS) - 1
@@ -134,7 +134,7 @@ class SuperBuildingCard(BuildingCard):
         raise NotImplementedError(f"upgrade_level method is not defined for objects of class {type(self)}")
 
     def __init__(self, building_type: str, public: bool = True) -> None:
-        Card.__init__(self, type(self).FACE_VALUES.index(SUPER_BUILDING_PREFIX + building_type), public)
+        Card.__init__(self, power = type(self).FACE_VALUES.index(SUPER_BUILDING_PREFIX + building_type), public = public)
 
 class WarriorCard(Card):
     FACE_VALUES: List[str] = [
@@ -147,7 +147,7 @@ class WarriorCard(Card):
 class GuardCard(WarriorCard):
     TYPE_NAME: str = "Guards"
     def __init__(self, power: int = 0, public: bool = True) -> None:
-        super().__init__(power, public)
+        super().__init__(power = power, public = public)
 
 def remove_color_codes(s: str) -> str:
     return re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]').sub('', s)
@@ -156,7 +156,7 @@ class CardList(Entity):
     def __init__(self, card_type: Type[Card], cards: List[Card] | None = None, public: bool = True) -> None:
         self.card_type: Type[Card] = card_type
         self.__cards: List[Card] = cards if cards is not None else []
-        super().__init__(self.content, colors.NONE, public)
+        super().__init__(content = self.content, color = colors.NONE, public = public)
     
     def __repr__(self) -> str:
         string_repr: str = self.card_type.TYPE_NAME + ":"
@@ -173,7 +173,7 @@ class CardList(Entity):
     
     def get_public_cards(self) -> 'CardList':
         public_cards: List[Card] = [public_card for public_card in self.__cards if public_card.public]
-        return CardList(self.card_type, public_cards, public = True)
+        return CardList(card_type = self.card_type, cards = public_cards, public = True)
     
     def remove(self, card: Card) -> None:
         self.__cards.remove(card)

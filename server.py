@@ -52,7 +52,7 @@ def handle_client(conn: socket.socket, addr: Any) -> None:
                     sendall_with_end(conn, player_num.to_bytes())
                     connections[(conn, addr)] = "ready"
                 elif encoded_data == SOCKET_SHARED_ENTITIES_UPDATE:
-                    public_entities: Dict[Tuple[int, int], Entity] = pickle.loads(recvall(conn))
+                    public_entities: Dict[Tuple[int, int], List[Entity]] = pickle.loads(recvall(conn))
                     print(f"{addr} [PLAYER {player_num}] Received entities: ", end = "")
                     print(public_entities)
 
@@ -60,7 +60,7 @@ def handle_client(conn: socket.socket, addr: Any) -> None:
                     while not entities_sent:
                         for other_conn_addr in list(connections.keys()):
                             if other_conn_addr != (conn, addr) and connections[other_conn_addr] == "ready":
-                                other_player = other_conn_addr[0]
+                                other_player: socket = other_conn_addr[0]
                                 sendall_with_end(other_player, SOCKET_SHARED_ENTITIES_UPDATE)
                                 sendall_with_end(other_player, pickle.dumps(public_entities))
                                 entities_sent = True
