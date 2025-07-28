@@ -3,7 +3,7 @@ import socket
 import threading
 import re
 from enum import Enum, auto
-from typing import Dict, Tuple, List, Type, Any
+from typing import Dict, Tuple, List, Type, Any, overload
 from collections import namedtuple
 
 class colors:
@@ -37,7 +37,14 @@ PHARAOH: str = "↰"
 SUPER_BUILDING_PREFIX: str = "SUP"
 CURSOR: str = "▲"
 
-LEVEL_COLORS: List[str] = [colors.GREEN, colors.BLUE, colors.YELLOW, colors.RED]
+MAIN_COLORS: List[str] = [colors.GREEN, colors.BLUE, colors.YELLOW, colors.RED]
+SUPER_COLORS: List[str] = [colors.RAINBOW]
+WARRIOR_FACE_VALUES: List[str] = [face_values.NUM1, face_values.NUM2, face_values.NUM3, 
+                                  face_values.NUM4, face_values.NUM5, face_values.NUM6, 
+                                  face_values.NUM7, face_values.NUM8, face_values.NUM9, face_values.PLUS_2]
+BANDAGE_FACE_VALUES: List[str] = [face_values.FACE_VALUE_BANDAGE, face_values.LEVEL_BANDAGE, face_values.COMBINED_BANDAGE]
+BUILDING_FACE_VALUES: List[str] = [face_values.HOSPITAL, face_values.BARRACKS]
+SUPER_BUILDING_FACE_VALUES: List[str] = [(SUPER_BUILDING_PREFIX + face_value) for face_value in BUILDING_FACE_VALUES]
 
 Coordinates = namedtuple("Coordinates", ["x", "y"])
 
@@ -55,7 +62,7 @@ class Entity:
         return_str: str = ''
         if self.color == colors.RAINBOW:
             for i in range(0, len(self.content)):
-                return_str += (LEVEL_COLORS[i%4] + self.content[i] + colors.ENDC)
+                return_str += (MAIN_COLORS[i%4] + self.content[i] + colors.ENDC)
         elif self.color == colors.NONE:
             return_str = self.content
         else:
@@ -79,91 +86,119 @@ class Entity:
     
 #     def hide(self) -> None:
 #         self.set_display_priority(-1)
+
+class CardState():
+    def __init__(self, level: str, face_value: str, pos_in_level: int) -> None:
+        self.level = level
+        self.face_value = face_value
+        self.pos_in_level = pos_in_level
     
+    def __eq__(self, other: 'CardState') -> bool:
+        if not isinstance(other, CardState):
+            return False
+        return self.level == other.level and self.pos_in_level == other.pos_in_level
+
+    def __hash__(self) -> int:
+        return hash(self.level, self.pos_in_level)
+
 class Card(Entity):
-    FACE_VALUES: List[str] = [] # MANDATORY OVERRIDE
-    POSSIBLE_COLORS: List[str] = LEVEL_COLORS
+    STATES: List[CardState] = [] # MANDATORY OVERRIDE
     TYPE_NAME: str = "Cards"
+    SUPPORTS_VALUE_UPGRADES: bool = True
 
     def __init_subclass__(cls) -> None:
         super().__init_subclass__()
-        cls.COUNT = len(cls.FACE_VALUES) * len(cls.POSSIBLE_COLORS)
-        cls.MAX_POWER = cls.COUNT - 1
+        cls.COUNT = len(cls.STATES)
+        cls.LAST_STATE_INDEX = cls.COUNT - 1
 
-    def __init__(self, power: int, coords: Tuple[int, int] = None, public: bool = False) -> None: # if card coordinates are None it should be a part of a CardList
-        self.power: int = power
-        super().__init__(content = self.content, coords = coords, color = self.color, public = public)
+    @overload
+    def __init__(self, state_index: int, coords: Tuple[int, int] = None, public: bool = False) -> None: ... # if card coordinates are None, it should be a part of a CardList
+    
+    @overload
+    def __init__(self, state: CardState, coords: Tuple[int, int] = None, public: bool = False) -> None: ... # if card coordinates are None, it should be a part of a CardList
+
+    def __init__( # provide either state or state index, but not both
+        self, 
+        state: CardState = None, 
+        state_index: int = None, 
+        coords: Tuple[int, int] = None, 
+        public: bool = False
+    ) -> None:
+        if not (state == None) ^ (state_index == None):
+            raise ValueError("state xor state_index must be provided")
+
+        if state is not None:
+            self.state = state
+            self.state_index = type(self).STATES.index(state)
+        else:
+            self.state_index = state_index
+            self.state = type(self).STATES[self.state_index]
+
+        super().__init__(
+            content = self.content, 
+            coords = coords, 
+            color = self.color, 
+            public = public
+        )
     
     @property
     def color(self) -> str:
-        return type(self).POSSIBLE_COLORS[self.power // len(type(self).FACE_VALUES)]
+        return self.state.level
     
     @property
     def content(self) -> str:
-        return type(self).FACE_VALUES[self.power % len(type(self).FACE_VALUES)]
-    
-    def __eq__(self, other: 'Card'):
-        return type(self) == type(other) and self.power == other.power
+        return self.state.face_value
 
-    def __hash__(self):
-        return hash((type(self), self.power))
-    
-    def upgrade_level(self, by: int = 1) -> 'Card':
-        self.power = min(self.power + by * len(type(self).FACE_VALUES), type(self).MAX_POWER)
-        return self
+    def __eq__(self, other: 'Card') -> bool:
+        return type(self) == type(other) and self.state == other.state
 
-    def upgrade_value(self, by: int = 1) -> 'Card':
-        self.power = min(self.power + by, type(self).MAX_POWER)
+    def __hash__(self) -> int:
+        return hash((type(self), self.state_index))
+    
+    def upgrade_level(self, by: int = 1) -> None:
+        index_iterator = self.state_index
+
+        while index_iterator < type(self).LAST_STATE_INDEX and by > 0:
+            index_iterator += 1
+            new_state = type(self).STATES[index_iterator]
+            if new_state.level != self.state.level and new_state.pos_in_level == self.state.pos_in_level:
+                self.state_index = index_iterator
+                self.state = new_state
+                by -= 1
+        
+        if type(self).SUPPORTS_VALUE_UPGRADES and index_iterator == type(self).LAST_STATE_INDEX and by > 0:
+            self.state_index = index_iterator
+            self.state = type(self).STATES[index_iterator]
+
+    def upgrade_value(self, by: int = 1) -> None:
+        self.state_index = min(self.state_index + by, type(self).LAST_STATE_INDEX)
+        self.state = type(self).STATES[self.state_index]
 
 #TODO: #2
 
 class BandageCard(Card):
-    FACE_VALUES: List[str] = [face_values.FACE_VALUE_BANDAGE, face_values.LEVEL_BANDAGE, face_values.COMBINED_BANDAGE]
+    STATES: List[CardState] = [CardState(level = level, face_value = face_value, pos_in_level = BANDAGE_FACE_VALUES.index(face_value)) for level in MAIN_COLORS for face_value in BANDAGE_FACE_VALUES]
     TYPE_NAME: str = "Bandages"
 
 class BuildingCard(Card):
-    FACE_VALUES: List[str] = [face_values.HOSPITAL, face_values.BARRACKS]
-    POSSIBLE_COLORS: List[str] = LEVEL_COLORS
+    STATES: List[CardState] = ([CardState(level = level, face_value = face_value, pos_in_level = BUILDING_FACE_VALUES.index(face_value)) for level in MAIN_COLORS for face_value in BUILDING_FACE_VALUES] + 
+                               [CardState(level = level, face_value = face_value, pos_in_level = SUPER_BUILDING_FACE_VALUES.index(face_value)) for level in SUPER_COLORS for face_value in SUPER_BUILDING_FACE_VALUES])
+    SUPPORTS_VALUE_UPGRADES = False
     TYPE_NAME: str = "Buildings"
 
     def __init__(self, building_type: str, level: str = colors.GREEN, coords: Tuple[int, int] = None, public: bool = True) -> None:
-        if building_type not in type(self).FACE_VALUES:
-            raise ValueError(f"Invalid face_value: {building_type!r}. Must be one of {type(self).FACE_VALUES}")
-        if level not in type(self).POSSIBLE_COLORS:
-            raise ValueError(f"Invalid level: {level!r}. Must be one of {type(self).POSSIBLE_COLORS}")
+        try:
+            state = next(state for state in type(self).STATES if state.level == level and state.face_value == building_type)
+        except StopIteration:
+            raise ValueError(f"{building_type} cannot be of level {level}")
         
-        face_value_index: int = type(self).FACE_VALUES.index(building_type)
-        face_values_count: int = len(type(self).FACE_VALUES)
-        level_index: int = type(self).POSSIBLE_COLORS.index(level)
-        super().__init__(power = level_index * face_values_count + face_value_index, coords = coords, public = public)
-    
-    def upgrade_level(self, by: int = 1) -> 'BuildingCard': # the return value of this method should always be reassigned: building_card = building_card.upgrade_level()
-        max_level = len(type(self).POSSIBLE_COLORS) - 1
-        current_level = type(self).POSSIBLE_COLORS.index(self.color)
-
-        if current_level == max_level:
-            return SuperBuildingCard(building_type = self.content, public = self.public)
-        
-        super().upgrade_level(by)
-        return self
-
-class SuperBuildingCard(BuildingCard): #FIXME: #3
-    FACE_VALUES: List[str] = [SUPER_BUILDING_PREFIX + face_values.HOSPITAL, SUPER_BUILDING_PREFIX + face_values.BARRACKS]
-    POSSIBLE_COLORS: List[str] = [colors.RAINBOW]
-
-    def upgrade_level(self) -> False:
-        return False
-
-    def __init__(self, building_type: str, coords: Tuple[int, int] = None, public: bool = True) -> None:
-        Card.__init__(self, coords = coords, power = type(self).FACE_VALUES.index(SUPER_BUILDING_PREFIX + building_type), public = public)
+        super().__init__(state = state, coords = coords, public = public)
 
 class WarriorCard(Card):
-    FACE_VALUES: List[str] = [
-        face_values.NUM1, face_values.NUM2, face_values.NUM3, face_values.NUM4,
-        face_values.NUM5, face_values.NUM6, face_values.NUM7, face_values.NUM8,
-        face_values.NUM9, face_values.PLUS_2
-    ]
+    STATES: List[CardState] = [CardState(level = level, face_value = face_value, pos_in_level = WARRIOR_FACE_VALUES.index(face_value)) for level in MAIN_COLORS for face_value in WARRIOR_FACE_VALUES]
     TYPE_NAME: str = "Warriors"
+    def __init__(self, coords: Tuple[int, int] = None, power: int = 0, public: bool = False) -> None:
+        super().__init__(state_index = power, coords = coords, public = public)
 
 class GuardCard(WarriorCard):
     TYPE_NAME: str = "Guards"
@@ -217,7 +252,7 @@ class CardList(Entity):
     def __contains__(self, card: Card) -> bool:
         if not isinstance(card, self.card_type):
             return False
-        return any(c.power == card.power and type(c) == type(card) for c in self.__cards)
+        return any((c == card) for c in self.__cards)
 
 SOCKET_END_MSG: bytes = b"<END>"
 SOCKET_CONNECTION_ESTABLISHED: bytes = b"CONNECTION ESTABLISHED"

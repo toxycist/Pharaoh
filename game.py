@@ -167,15 +167,15 @@ try:
             keyboard.wait('space')
             if not len(PlayerManager.main_warrior_list):
                 warrior_card = WarriorCard(power = 0, public = True)
-                bandage_card = BandageCard(power = 0, public = True)
-                building_card = (BuildingCard(face_values.BARRACKS))
+                bandage_card = BandageCard(state_index = 0, public = True)
+                building_card = BuildingCard(building_type = face_values.HOSPITAL)
                 PlayerManager.main_warrior_list.append(warrior_card)
                 PlayerManager.main_bandage_list.append(bandage_card)
                 PlayerManager.main_building_list.append(building_card)
             else:
                 warrior_card.upgrade_level()
                 bandage_card.upgrade_level()
-                building_card = building_card.upgrade_level()
+                building_card.upgrade_level()
 
             refresh_screen()
             send_public_entities()
