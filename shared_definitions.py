@@ -4,6 +4,7 @@ import threading
 import re
 from enum import Enum, auto
 from typing import Dict, Tuple, List, Type, Any
+from collections import namedtuple
 
 class colors:
     NONE: None = None
@@ -34,17 +35,21 @@ class face_values:
     NUM9: str = "9"
 PHARAOH: str = "↰"
 SUPER_BUILDING_PREFIX: str = "SUP"
+CURSOR: str = "▲"
 
 LEVEL_COLORS: List[str] = [colors.GREEN, colors.BLUE, colors.YELLOW, colors.RED]
 
+Coordinates = namedtuple("Coordinates", ["x", "y"])
+
 class Entity:
-    def __init__(self, content: str, color: str = colors.GRAY, display_priority: int = 0, public: bool = False) -> None:
+    def __init__(self, content: str, color: str = colors.GRAY, display_priority: int = 0, coords: Tuple[int, int] = None, public: bool = False) -> None:
         if not hasattr(self, 'content'):
             self.content: str = content
         if not hasattr(self, 'color'):
             self.color: str = color
-        self.display_priority = display_priority
-        self.public: bool = public
+        self.coords = Coordinates(coords[0], coords[1]) if coords else None # an Entity with no coords will not be displayed unless it is a part of a larger structure, which will display it
+        self.display_priority = display_priority # higher value means this Entity is drawn above others at the same position. negative number to hide the Entity from screen
+        self.public = public
 
     def __repr__(self) -> str:
         return_str: str = ''
@@ -60,7 +65,21 @@ class Entity:
     
     def switch_public(self) -> None:
         self.public = not self.public
+    
+    def set_display_priority(self, to: int) -> None:
+        self.display_priority = to
 
+# class Cursor(Entity):
+#     def __init__(self) -> None:
+#         self.selection_scope: Dict[Tuple[int, int], Entity] = []
+#         super().__init__(content=CURSOR, color=colors.WHITE, display_priority=-1, public=False)
+
+#     def show(self) -> None:
+#         self.set_display_priority(1)
+    
+#     def hide(self) -> None:
+#         self.set_display_priority(-1)
+    
 class Card(Entity):
     FACE_VALUES: List[str] = [] # MANDATORY OVERRIDE
     POSSIBLE_COLORS: List[str] = LEVEL_COLORS
@@ -71,9 +90,9 @@ class Card(Entity):
         cls.COUNT = len(cls.FACE_VALUES) * len(cls.POSSIBLE_COLORS)
         cls.MAX_POWER = cls.COUNT - 1
 
-    def __init__(self, power: int, public: bool = False) -> None:
+    def __init__(self, power: int, coords: Tuple[int, int] = None, public: bool = False) -> None: # if card coordinates are None it should be a part of a CardList
         self.power: int = power
-        super().__init__(content= self.content, color = self.color, public = public)
+        super().__init__(content = self.content, coords = coords, color = self.color, public = public)
     
     @property
     def color(self) -> str:
@@ -96,16 +115,18 @@ class Card(Entity):
     def upgrade_value(self, by: int = 1) -> 'Card':
         self.power = min(self.power + by, type(self).MAX_POWER)
 
+#TODO: #2
+
 class BandageCard(Card):
     FACE_VALUES: List[str] = [face_values.FACE_VALUE_BANDAGE, face_values.LEVEL_BANDAGE, face_values.COMBINED_BANDAGE]
     TYPE_NAME: str = "Bandages"
 
-class BuildingCard(Card): #TODO: make color and content calculation from Card class work with super buildings
+class BuildingCard(Card):
     FACE_VALUES: List[str] = [face_values.HOSPITAL, face_values.BARRACKS]
     POSSIBLE_COLORS: List[str] = LEVEL_COLORS
     TYPE_NAME: str = "Buildings"
 
-    def __init__(self, building_type: str, level: str = colors.GREEN, public: bool = True) -> None:
+    def __init__(self, building_type: str, level: str = colors.GREEN, coords: Tuple[int, int] = None, public: bool = True) -> None:
         if building_type not in type(self).FACE_VALUES:
             raise ValueError(f"Invalid face_value: {building_type!r}. Must be one of {type(self).FACE_VALUES}")
         if level not in type(self).POSSIBLE_COLORS:
@@ -114,27 +135,27 @@ class BuildingCard(Card): #TODO: make color and content calculation from Card cl
         face_value_index: int = type(self).FACE_VALUES.index(building_type)
         face_values_count: int = len(type(self).FACE_VALUES)
         level_index: int = type(self).POSSIBLE_COLORS.index(level)
-        super().__init__(power = level_index * face_values_count + face_value_index, public = public)
+        super().__init__(power = level_index * face_values_count + face_value_index, coords = coords, public = public)
     
     def upgrade_level(self, by: int = 1) -> 'BuildingCard': # the return value of this method should always be reassigned: building_card = building_card.upgrade_level()
         max_level = len(type(self).POSSIBLE_COLORS) - 1
         current_level = type(self).POSSIBLE_COLORS.index(self.color)
 
         if current_level == max_level:
-            return SuperBuildingCard(self.content, self.public)
+            return SuperBuildingCard(building_type = self.content, public = self.public)
         
         super().upgrade_level(by)
         return self
 
-class SuperBuildingCard(BuildingCard):
+class SuperBuildingCard(BuildingCard): #FIXME: #3
     FACE_VALUES: List[str] = [SUPER_BUILDING_PREFIX + face_values.HOSPITAL, SUPER_BUILDING_PREFIX + face_values.BARRACKS]
     POSSIBLE_COLORS: List[str] = [colors.RAINBOW]
 
-    def upgrade_level(self) -> None:
-        raise NotImplementedError(f"upgrade_level method is not defined for objects of class {type(self)}")
+    def upgrade_level(self) -> False:
+        return False
 
-    def __init__(self, building_type: str, public: bool = True) -> None:
-        Card.__init__(self, power = type(self).FACE_VALUES.index(SUPER_BUILDING_PREFIX + building_type), public = public)
+    def __init__(self, building_type: str, coords: Tuple[int, int] = None, public: bool = True) -> None:
+        Card.__init__(self, coords = coords, power = type(self).FACE_VALUES.index(SUPER_BUILDING_PREFIX + building_type), public = public)
 
 class WarriorCard(Card):
     FACE_VALUES: List[str] = [
@@ -146,17 +167,17 @@ class WarriorCard(Card):
 
 class GuardCard(WarriorCard):
     TYPE_NAME: str = "Guards"
-    def __init__(self, power: int = 0, public: bool = True) -> None:
-        super().__init__(power = power, public = public)
+    def __init__(self, coords: Tuple[int, int] = None, power: int = 0, public: bool = True) -> None:
+        super().__init__(power = power, coords = coords, public = public)
 
 def remove_color_codes(s: str) -> str:
     return re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]').sub('', s)
 
 class CardList(Entity):
-    def __init__(self, card_type: Type[Card], cards: List[Card] | None = None, public: bool = True) -> None:
+    def __init__(self, coords: Tuple[int, int], card_type: Type[Card], cards: List[Card] | None = None, public: bool = True) -> None:
         self.card_type: Type[Card] = card_type
         self.__cards: List[Card] = cards if cards is not None else []
-        super().__init__(content = self.content, color = colors.NONE, public = public)
+        super().__init__(content = self.content, coords = coords, color = colors.NONE, public = public)
     
     def __repr__(self) -> str:
         string_repr: str = self.card_type.TYPE_NAME + ":"
@@ -171,9 +192,9 @@ class CardList(Entity):
     def content(self) -> str:
         return remove_color_codes(repr(self))
     
-    def get_public_cards(self) -> 'CardList':
+    def get_public_slice(self) -> 'CardList':
         public_cards: List[Card] = [public_card for public_card in self.__cards if public_card.public]
-        return CardList(card_type = self.card_type, cards = public_cards, public = True)
+        return CardList(coords = self.coords, card_type = self.card_type, cards = public_cards, public = True)
     
     def remove(self, card: Card) -> None:
         self.__cards.remove(card)

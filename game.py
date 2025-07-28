@@ -17,6 +17,7 @@ MIN_Y: int = 0
 MAX_X: int = GAME_FIELD_WIDTH - 1
 MAX_Y: int = GAME_FIELD_HEIGHT - 1
 PLAYER_SIDE_HEIGHT: int = 4
+# coordinates should always be in the form of (x, y)
 PHARAOH_COORDINATES: Tuple[int, int] = (10, MAX_Y - 3)
 GUARD_COORDINATES: List[Tuple[int, int]] = [(7, MAX_Y - 3), (13, MAX_Y - 3)]
 MAIN_WARRIOR_LIST_COORDINATES: Tuple[int, int] = (23, MAX_Y - 5)
@@ -27,61 +28,62 @@ class PlayerManager:
     close_game: bool = False
     player_num: int = 0
     my_turn: bool = False
-    my_entities: Dict[Tuple[int, int], List[Entity]] = {} # (x, y) is used as a key
-    received_entities: Dict[Tuple[int, int], List[Entity]] = {}
-    main_warrior_list: CardList = CardList(WarriorCard)
-    main_bandage_list: CardList = CardList(BandageCard)
-    main_building_list: CardList = CardList(BuildingCard)
-    footer: str = ""
+    my_entities: List[Entity] = []
+    received_entities: List[Entity] = []
+    main_warrior_list: CardList = CardList(card_type = WarriorCard, coords = MAIN_WARRIOR_LIST_COORDINATES)
+    main_bandage_list: CardList = CardList(card_type = BandageCard, coords = MAIN_BANDAGE_LIST_COORDINATES)
+    main_building_list: CardList = CardList(card_type = BuildingCard, coords = MAIN_BUILDING_LIST_COORDINATES)
+    guards: List[GuardCard] = [GuardCard(coords = GUARD_COORDINATES[0]), GuardCard(coords = GUARD_COORDINATES[1])]
+    # cursor: Cursor = Cursor()
+    footer: Entity = Entity(content = "", coords = (0, GAME_FIELD_HEIGHT))
     second_player_joined: bool = False
 
-def add_new_entity(entity: Entity, coords: Tuple[int, int] | List[Tuple[int, int]]) -> None:
-    if isinstance(coords, list):
-        for coords_pair in coords:
-            PlayerManager.my_entities.setdefault(coords_pair, []).append(entity)
-    else:
-        PlayerManager.my_entities.setdefault(coords, []).append(entity)
+def add_new_entity(entity: Entity) -> None:
+    PlayerManager.my_entities.append(entity)
 
 def display_game_field() -> None:
-    for y in range(0, GAME_FIELD_HEIGHT):
-        x = 0
-        while x < GAME_FIELD_WIDTH:
-            #get methods return entity lists. then the lists are checked for being None and if they are not None, their entities are taken
-            candidate_entities: List[Entity] = [entity for entity_list in [PlayerManager.my_entities.get((x, y)), PlayerManager.received_entities.get((x, y))] if entity_list is not None for entity in entity_list]
-            entity: Entity = max(candidate_entities, key = lambda e: e.display_priority, default = None)
-            if entity:
-                print(entity, end='')
-                x += len(entity.content)
-            else:
+    all_entities: List[Entity] = sorted(PlayerManager.my_entities + PlayerManager.received_entities, key=lambda e: (e.coords.y, e.coords.x))
+    x: int = 0
+    y: int = 0
+    for entity in all_entities:
+        while entity.coords != (x, y):
+            if entity.coords.y == y:
+                if entity.coords.x < x:
+                    break
                 print(' ', end='')
                 x += 1
-        print()
-    print(Entity(PlayerManager.footer))
+            else:
+                print()
+                y += 1
+                x = 0
+        candidate_entities: List[Entity] = [e for e in all_entities if e.coords == entity.coords and e.display_priority >= 0]
+        entity_to_display: Entity = max(candidate_entities, key = lambda e: e.display_priority, default = None)
+        print(entity_to_display, end='')
+        x += len(entity_to_display.content)
+    print(PlayerManager.footer)
 
 def refresh_screen() -> None:
     system('cls')
     display_game_field()
 
 def send_public_entities() -> None:
-    public_entities: Dict[Tuple[int, int], List[Entity]] = {}
-    for coords, entities in PlayerManager.my_entities.items():
-        for entity in entities:
-            if entity.public:
-                if isinstance(entity, CardList):
-                    public_entities.setdefault(coords, []).append(entity.get_public_cards())
-                else:
-                    public_entities.setdefault(coords, []).append(entity)
+    public_entities: List[Entity] = []
+    for public_entity in [e for e in PlayerManager.my_entities if e.public]:
+        if isinstance(public_entity, CardList):
+            public_entities.append(public_entity.get_public_slice())
+        else:
+            public_entities.append(public_entity)
     sendall_with_end(s, SOCKET_SHARED_ENTITIES_UPDATE)
     sendall_with_end(s, pickle.dumps(public_entities))
  
 def receive_public_entities() -> int | None:
     encoded_data: bytes = recvall(s)
     if encoded_data == SOCKET_SHARED_ENTITIES_UPDATE:
-        received_entities: Dict[Tuple[int, int], List[Entity]] = pickle.loads(recvall(s))
+        received_entities: List[Entity] = pickle.loads(recvall(s))
         PlayerManager.received_entities.clear() # clear previously received entities
-        for coords, entities in received_entities.items():
-            lst = PlayerManager.received_entities.setdefault((coords[0], abs(coords[1] - MAX_Y)), []) # reverse y coordinate of the received entity list, create an empty list on these coordinates in PlayerManager.received_entities if it doesn't exist and save the result of set_default() to a temporary variable to prevent performing augmented assignment on the return value of a function
-            lst += [entity for entity in entities] # add each entity from the received entity list to PlayerManager.received_entities[coords]
+        for entity in received_entities:
+            entity.coords = Coordinates(entity.coords.x, abs(entity.coords.y - MAX_Y)) # reverse y coordinate of the received entity, so it will be displayed on the other player's side
+            PlayerManager.received_entities.append(entity)
         refresh_screen()
         return 1
     elif encoded_data == SOCKET_YOUR_TURN:
@@ -92,7 +94,7 @@ def end_turn() -> None:
     sendall_with_end(s, SOCKET_YOUR_TURN)
     PlayerManager.my_turn = False
 
-##### [DIFFICULT ZONE] PROBABILITIES ##### TODO: fix #1
+##### [DIFFICULT ZONE] PROBABILITIES ##### TODO: #1
 def triangular_number(n: int) -> int:
     return (n**2 + n) / 2 # factorial, but with sum
 
@@ -104,10 +106,13 @@ def draw_a_card(card_type: type[Entity], to_cardlist: CardList, public: bool) ->
     to_cardlist.append(card_type(power = picked_card_power, public = True))
 #####
 
-add_new_entity(Entity("╭" + "─" * (GAME_FIELD_WIDTH - 2) + "╮"), (MIN_X, MIN_Y))
+add_new_entity(Entity(content = "╭" + "─" * (GAME_FIELD_WIDTH - 2) + "╮", coords = (MIN_X, MIN_Y)))
 for y in range(1, GAME_FIELD_HEIGHT - 1):
-    add_new_entity(Entity("│"), [(MIN_X, y), (MAX_X, y)])
-add_new_entity(Entity("╰" + "─" * (GAME_FIELD_WIDTH - 2) + "╯"), (MIN_X, MAX_Y))
+    add_new_entity(Entity(content = "│", coords = (MIN_X, y)))
+    add_new_entity(Entity(content = "│", coords = (MAX_X, y)))
+add_new_entity(Entity(content = "╰" + "─" * (GAME_FIELD_WIDTH - 2) + "╯", coords = (MIN_X, MAX_Y)))
+
+add_new_entity(PlayerManager.footer)
 
 PlayerManager.footer = "Press spacebar when you are ready."
 display_game_field()
@@ -132,19 +137,20 @@ try:
     PlayerManager.player_num = int.from_bytes(data)
     PlayerManager.footer = f"You are player {PlayerManager.player_num}."
     if PlayerManager.player_num == 1:
-        add_new_entity(Entity("-" * (GAME_FIELD_WIDTH - 2), colors.YELLOW), (1, PLAYER_SIDE_HEIGHT + 2))
-        add_new_entity(Entity("-" * (GAME_FIELD_WIDTH - 2), colors.BLUE), (1, MAX_Y - (PLAYER_SIDE_HEIGHT + 2)))
+        add_new_entity(Entity(content = "-" * (GAME_FIELD_WIDTH - 2), coords = (1, PLAYER_SIDE_HEIGHT + 2), color = colors.YELLOW))
+        add_new_entity(Entity(content = "-" * (GAME_FIELD_WIDTH - 2), coords = (1, MAX_Y - (PLAYER_SIDE_HEIGHT + 2)), color = colors.BLUE))
         PlayerManager.my_turn = True
     elif PlayerManager.player_num == 2:
-        add_new_entity(Entity("-" * (GAME_FIELD_WIDTH - 2), colors.YELLOW), (1, MAX_Y - (PLAYER_SIDE_HEIGHT + 2)))
-        add_new_entity(Entity("-" * (GAME_FIELD_WIDTH - 2), colors.BLUE), (1, PLAYER_SIDE_HEIGHT + 2))
-    add_new_entity(Entity(PHARAOH, colors.WHITE, public=True), PHARAOH_COORDINATES)
-    add_new_entity(GuardCard(), GUARD_COORDINATES[0])
-    add_new_entity(GuardCard(), GUARD_COORDINATES[1])
+        add_new_entity(Entity(content = "-" * (GAME_FIELD_WIDTH - 2), coords = (1, PLAYER_SIDE_HEIGHT + 2), color = colors.BLUE))
+        add_new_entity(Entity(content = "-" * (GAME_FIELD_WIDTH - 2), coords = (1, MAX_Y - (PLAYER_SIDE_HEIGHT + 2)), color = colors.YELLOW))
+    add_new_entity(Entity(content = PHARAOH, coords = PHARAOH_COORDINATES, color = colors.WHITE, public=True))
 
-    add_new_entity(PlayerManager.main_warrior_list, MAIN_WARRIOR_LIST_COORDINATES)
-    add_new_entity(PlayerManager.main_bandage_list, MAIN_BANDAGE_LIST_COORDINATES)
-    add_new_entity(PlayerManager.main_building_list, MAIN_BUILDING_LIST_COORDINATES)
+    for guard_card in PlayerManager.guards:
+        add_new_entity(guard_card)
+
+    add_new_entity(PlayerManager.main_warrior_list)
+    add_new_entity(PlayerManager.main_bandage_list)
+    add_new_entity(PlayerManager.main_building_list)
 
     refresh_screen()
 
@@ -155,21 +161,29 @@ try:
 
     while not PlayerManager.close_game:
         if PlayerManager.my_turn:
+            # PlayerManager.cursor.show()
             
             ### TEST
-            PlayerManager.main_building_list.append(BuildingCard(face_values.HOSPITAL))
+            keyboard.wait('space')
+            if not len(PlayerManager.main_warrior_list):
+                warrior_card = WarriorCard(power = 0, public = True)
+                bandage_card = BandageCard(power = 0, public = True)
+                building_card = (BuildingCard(face_values.BARRACKS))
+                PlayerManager.main_warrior_list.append(warrior_card)
+                PlayerManager.main_bandage_list.append(bandage_card)
+                PlayerManager.main_building_list.append(building_card)
+            else:
+                warrior_card.upgrade_level()
+                bandage_card.upgrade_level()
+                building_card = building_card.upgrade_level()
+
             refresh_screen()
             send_public_entities()
-
-            while SuperBuildingCard(face_values.HOSPITAL) not in PlayerManager.main_building_list:
-                keyboard.wait('space')
-                PlayerManager.main_building_list[0] = PlayerManager.main_building_list[0].upgrade_level()
-                refresh_screen()
-                send_public_entities()
             ###
 
             end_turn()
         else:
+            # PlayerManager.cursor.hide()
             while receive_public_entities():
                 pass
 
