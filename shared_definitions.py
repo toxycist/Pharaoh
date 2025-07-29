@@ -88,10 +88,11 @@ class Entity:
 #         self.set_display_priority(-1)
 
 class CardState():
-    def __init__(self, level: str, face_value: str, pos_in_level: int) -> None:
+    def __init__(self, level: str, face_value: str, pos_in_level: int, specific_states: Dict = {}) -> None:
         self.level = level
         self.face_value = face_value
         self.pos_in_level = pos_in_level
+        self.specific_states = specific_states # syntax: {'name': str, 'value': Any}
     
     def __eq__(self, other: 'CardState') -> bool:
         if not isinstance(other, CardState):
