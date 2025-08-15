@@ -245,10 +245,10 @@ class GuardCard(WarriorCard):
 
 
 class CardList(Entity):
-    def __init__(self, coords: Tuple[int, int], card_type: Type[Card], cards: List[Card] | None = None, public: bool = True) -> None:
+    def __init__(self, coords: Tuple[int, int], card_type: Type[Card], cards: List[Card] | None = None, selectable: bool = True, public: bool = True) -> None:
         self.card_type: Type[Card] = card_type
         self.__cards: List[Card] = cards if cards is not None else []
-        super().__init__(content = self.content, coords = coords, color = colors.NONE, public = public)
+        super().__init__(content = self.content, coords = coords, color = colors.NONE, selectable = selectable, public = public)
     
     def __repr__(self) -> str:
         string_repr: str = self.card_type.TYPE_NAME + ":"

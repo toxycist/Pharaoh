@@ -196,11 +196,12 @@ try:
             GameController.refresh_screen()
 
             while GameController.my_turn:
-                key = keyboard.read_key()
-                if key not in GameController.controls:
-                    continue
-                else:
-                    GameController.controls[key]()
+                event = keyboard.read_event()
+                if event.event_type == keyboard.KEY_DOWN:
+                    if event.name not in GameController.controls:
+                        continue
+                    else:
+                        GameController.controls[event.name]()
         else:
             GameController.cursor.hide()
             GameController.refresh_screen()
