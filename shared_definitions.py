@@ -3,8 +3,10 @@ import socket
 import threading
 import re
 from enum import Enum, auto
-from typing import Dict, Tuple, List, Type, Any, overload
+from typing import Dict, Tuple, List, Type, Any, Callable, overload
+from _collections_abc import Iterable
 from collections import namedtuple
+from sortedcontainers import SortedList
 
 class colors:
     NONE: None = None
@@ -35,7 +37,8 @@ class face_values:
     NUM9: str = "9"
 PHARAOH: str = "↰"
 SUPER_BUILDING_PREFIX: str = "SUP"
-CURSOR: str = "▲"
+CURSOR_UP: str = "▲"
+CURSOR_DOWN: str = "▼"
 
 MAIN_COLORS: List[str] = [colors.GREEN, colors.BLUE, colors.YELLOW, colors.RED]
 SUPER_COLORS: List[str] = [colors.RAINBOW]
@@ -48,12 +51,22 @@ SUPER_BUILDING_FACE_VALUES: List[str] = [(SUPER_BUILDING_PREFIX + face_value) fo
 
 Coordinates = namedtuple("Coordinates", ["x", "y"])
 
+def remove_color_codes(s: str) -> str:
+    return re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]').sub('', s)
+
+def index_by_identity(iterable: Iterable, obj: Any) -> int | None:
+    for i, item in enumerate(iterable):
+        if item is obj:  # ← identity comparison
+            return i
+    return None
+
 class Entity:
-    def __init__(self, content: str, color: str = colors.GRAY, display_priority: int = 0, coords: Tuple[int, int] = None, public: bool = False) -> None:
+    def __init__(self, content: str, color: str = colors.GRAY, display_priority: int = 0, coords: Tuple[int, int] = None, selectable: bool = False, public: bool = False) -> None:
         if not hasattr(self, 'content'):
             self.content: str = content
         if not hasattr(self, 'color'):
             self.color: str = color
+        self.selectable = selectable
         self.coords = Coordinates(coords[0], coords[1]) if coords else None # an Entity with no coords will not be displayed unless it is a part of a larger structure, which will display it
         self.display_priority = display_priority # higher value means this Entity is drawn above others at the same position. negative number to hide the Entity from screen
         self.public = public
@@ -69,23 +82,44 @@ class Entity:
             return_str = self.color + self.content + colors.ENDC
 
         return return_str
-    
-    def switch_public(self) -> None:
-        self.public = not self.public
-    
-    def set_display_priority(self, to: int) -> None:
-        self.display_priority = to
 
-# class Cursor(Entity):
-#     def __init__(self) -> None:
-#         self.selection_scope: Dict[Tuple[int, int], Entity] = []
-#         super().__init__(content=CURSOR, color=colors.WHITE, display_priority=-1, public=False)
+class Cursor(Entity):
+    def __init__(self, scope: SortedList[Entity] = []) -> None:
+        self.selected = None
+        self.__scope: SortedList[Entity] = scope
+        super().__init__(content=CURSOR_UP, color=colors.WHITE, public=False)
 
-#     def show(self) -> None:
-#         self.set_display_priority(1)
+    @property
+    def selectable_scope(self) -> List[Entity]:
+        return [e for e in self.__scope if e.selectable]
     
-#     def hide(self) -> None:
-#         self.set_display_priority(-1)
+    @property
+    def index_in_scope(self) -> int | None:
+        return index_by_identity(iterable = self.selectable_scope, obj = self.selected)
+
+    def show(self) -> None:
+        if len(self.selectable_scope) > 0 and self not in self.__scope:
+            self.select(index_in_scope = 0)
+    
+    def hide(self) -> None:
+        if self in self.__scope:
+            self.__scope.remove(self)
+    
+    def select(self, index_in_scope: int) -> None:
+        self.selected = self.selectable_scope[index_in_scope]
+        self.__scope.discard(self)
+        self.coords = Coordinates(self.selected.coords.x, self.selected.coords.y + 1)
+        self.__scope.add(self)
+    
+    def select_next(self) -> None:
+        index_in_scope: int = index_by_identity(iterable = self.selectable_scope, obj = self.selected)
+        if (index_in_scope != len(self.selectable_scope) - 1):
+            self.select(index_in_scope + 1)
+    
+    def select_previous(self) -> None:
+        index_in_scope: int = index_by_identity(iterable = self.selectable_scope, obj = self.selected)
+        if (index_in_scope != 0):
+            self.select(index_in_scope - 1)
 
 class CardState():
     def __init__(self, level: str, face_value: str, pos_in_level: int, specific_states: Dict = {}) -> None:
@@ -113,18 +147,20 @@ class Card(Entity):
         cls.LAST_STATE_INDEX = cls.COUNT - 1
 
     @overload
-    def __init__(self, state_index: int, coords: Tuple[int, int] = None, public: bool = False) -> None: ... # if card coordinates are None, it should be a part of a CardList
+    def __init__(self, state_index: int, coords: Tuple[int, int] = None, selectable: bool = True, public: bool = False) -> None: ...
     
     @overload
-    def __init__(self, state: CardState, coords: Tuple[int, int] = None, public: bool = False) -> None: ... # if card coordinates are None, it should be a part of a CardList
+    def __init__(self, state: CardState, coords: Tuple[int, int] = None, selectable: bool = True, public: bool = False) -> None: ...
 
-    def __init__( # provide either state or state index, but not both
+    def __init__( # provide either state or state index, but not both. if card coordinates are None, it should be a part of a CardList
         self, 
         state: CardState = None, 
         state_index: int = None, 
-        coords: Tuple[int, int] = None, 
+        coords: Tuple[int, int] = None,
+        selectable: bool = True, 
         public: bool = False
     ) -> None:
+        """provide either state or state index, but not both. if card coordinates are None, it should be a part of a CardList"""
         if not (state == None) ^ (state_index == None):
             raise ValueError("state xor state_index must be provided")
 
@@ -137,8 +173,9 @@ class Card(Entity):
 
         super().__init__(
             content = self.content, 
-            coords = coords, 
-            color = self.color, 
+            coords = coords,
+            color = self.color,
+            selectable = selectable,
             public = public
         )
     
@@ -206,8 +243,6 @@ class GuardCard(WarriorCard):
     def __init__(self, coords: Tuple[int, int] = None, power: int = 0, public: bool = True) -> None:
         super().__init__(power = power, coords = coords, public = public)
 
-def remove_color_codes(s: str) -> str:
-    return re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]').sub('', s)
 
 class CardList(Entity):
     def __init__(self, coords: Tuple[int, int], card_type: Type[Card], cards: List[Card] | None = None, public: bool = True) -> None:

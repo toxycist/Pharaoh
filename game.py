@@ -24,75 +24,85 @@ MAIN_WARRIOR_LIST_COORDINATES: Tuple[int, int] = (23, MAX_Y - 5)
 MAIN_BANDAGE_LIST_COORDINATES: Tuple[int, int] = (23, MAX_Y - 3)
 MAIN_BUILDING_LIST_COORDINATES: Tuple[int, int] = (23, MAX_Y - 1)
 
-class PlayerManager:
+class GameController:
     close_game: bool = False
     player_num: int = 0
     my_turn: bool = False
-    my_entities: List[Entity] = []
-    received_entities: List[Entity] = []
+    my_entities: SortedList[Entity] = SortedList(key=lambda e: (e.coords.y, e.coords.x) if e.coords else (-1, -1)) # apparently fuckass SortedList uses its key even when checking for membership, so providing a value without coords just fucking crashes the program. this is why yje check for e.coords is needed
+    received_entities: SortedList[Entity] = SortedList(key=lambda e: (e.coords.y, e.coords.x))
     main_warrior_list: CardList = CardList(card_type = WarriorCard, coords = MAIN_WARRIOR_LIST_COORDINATES)
     main_bandage_list: CardList = CardList(card_type = BandageCard, coords = MAIN_BANDAGE_LIST_COORDINATES)
     main_building_list: CardList = CardList(card_type = BuildingCard, coords = MAIN_BUILDING_LIST_COORDINATES)
-    guards: List[GuardCard] = [GuardCard(coords = GUARD_COORDINATES[0]), GuardCard(coords = GUARD_COORDINATES[1])]
-    # cursor: Cursor = Cursor()
+    guard_list: List[GuardCard] = [GuardCard(coords = GUARD_COORDINATES[0]), GuardCard(coords = GUARD_COORDINATES[1])]
+    cursor: Cursor = Cursor(scope = my_entities)
     footer: Entity = Entity(content = "", coords = (0, GAME_FIELD_HEIGHT))
     second_player_joined: bool = False
 
-def add_new_entity(entity: Entity) -> None:
-    PlayerManager.my_entities.append(entity)
+    controls: Dict[str, Callable] = {}
 
-def display_game_field() -> None:
-    all_entities: List[Entity] = sorted(PlayerManager.my_entities + PlayerManager.received_entities, key=lambda e: (e.coords.y, e.coords.x))
-    x: int = 0
-    y: int = 0
-    for entity in all_entities:
-        while entity.coords != (x, y):
-            if entity.coords.y == y:
-                if entity.coords.x < x:
-                    break
-                print(' ', end='')
-                x += 1
+    def __new__(cls):
+        raise RuntimeError(f"class {cls} is not meant to be instantiated")
+
+    @classmethod
+    def add_new_entity(cls, entity: Entity) -> None:
+        cls.my_entities.add(entity)
+
+    @classmethod
+    def display_game_field(cls) -> None:
+        all_entities: SortedList[Entity] = cls.my_entities + cls.received_entities
+        x: int = 0
+        y: int = 0
+        for entity in all_entities:
+            while entity.coords != (x, y):
+                if entity.coords.y == y:
+                    if entity.coords.x < x:
+                        break
+                    print(' ', end='')
+                    x += 1
+                else:
+                    print()
+                    y += 1
+                    x = 0
+            candidate_entities: List[Entity] = [e for e in all_entities if e.coords == entity.coords and e.display_priority >= 0]
+            entity_to_display: Entity = max(candidate_entities, key = lambda e: e.display_priority, default = None)
+            print(entity_to_display, end='')
+            x += len(entity_to_display.content)
+        print(cls.footer)
+    
+    @classmethod
+    def refresh_screen(cls) -> None:
+        system('cls')
+        cls.display_game_field()
+
+    @classmethod
+    def send_public_entities(cls) -> None:
+        public_entities: List[Entity] = []
+        for public_entity in [e for e in cls.my_entities if e.public]:
+            if isinstance(public_entity, CardList):
+                public_entities.append(public_entity.get_public_slice())
             else:
-                print()
-                y += 1
-                x = 0
-        candidate_entities: List[Entity] = [e for e in all_entities if e.coords == entity.coords and e.display_priority >= 0]
-        entity_to_display: Entity = max(candidate_entities, key = lambda e: e.display_priority, default = None)
-        print(entity_to_display, end='')
-        x += len(entity_to_display.content)
-    print(PlayerManager.footer)
+                public_entities.append(public_entity)
+        sendall_with_end(s, SOCKET_SHARED_ENTITIES_UPDATE)
+        sendall_with_end(s, pickle.dumps(public_entities))
 
-def refresh_screen() -> None:
-    system('cls')
-    display_game_field()
-
-def send_public_entities() -> None:
-    public_entities: List[Entity] = []
-    for public_entity in [e for e in PlayerManager.my_entities if e.public]:
-        if isinstance(public_entity, CardList):
-            public_entities.append(public_entity.get_public_slice())
-        else:
-            public_entities.append(public_entity)
-    sendall_with_end(s, SOCKET_SHARED_ENTITIES_UPDATE)
-    sendall_with_end(s, pickle.dumps(public_entities))
- 
-def receive_public_entities() -> int | None:
-    encoded_data: bytes = recvall(s)
-    if encoded_data == SOCKET_SHARED_ENTITIES_UPDATE:
-        received_entities: List[Entity] = pickle.loads(recvall(s))
-        PlayerManager.received_entities.clear() # clear previously received entities
-        for entity in received_entities:
-            entity.coords = Coordinates(entity.coords.x, abs(entity.coords.y - MAX_Y)) # reverse y coordinate of the received entity, so it will be displayed on the other player's side
-            PlayerManager.received_entities.append(entity)
-        refresh_screen()
-        return 1
-    elif encoded_data == SOCKET_YOUR_TURN:
-        PlayerManager.my_turn = True
-        return 0
-
-def end_turn() -> None:
-    sendall_with_end(s, SOCKET_YOUR_TURN)
-    PlayerManager.my_turn = False
+    @classmethod
+    def receive_public_entities(cls) -> int | None:
+        encoded_data: bytes = recvall(s)
+        if encoded_data == SOCKET_SHARED_ENTITIES_UPDATE:
+            received_entities: List[Entity] = pickle.loads(recvall(s))
+            cls.received_entities.clear() # clear previously received entities
+            for entity in received_entities:
+                entity.coords = Coordinates(entity.coords.x, abs(entity.coords.y - MAX_Y)) # reverse y coordinate of the received entity, so it will be displayed on the other player's side
+                cls.received_entities.add(entity)
+            return 1
+        elif encoded_data == SOCKET_YOUR_TURN:
+            cls.my_turn = True
+            return 0
+        
+    @classmethod
+    def end_turn(cls) -> None:
+        sendall_with_end(s, SOCKET_YOUR_TURN)
+        cls.my_turn = False
 
 ##### [DIFFICULT ZONE] PROBABILITIES ##### TODO: #1
 def triangular_number(n: int) -> int:
@@ -106,16 +116,16 @@ def draw_a_card(card_type: type[Entity], to_cardlist: CardList, public: bool) ->
     to_cardlist.append(card_type(power = picked_card_power, public = True))
 #####
 
-add_new_entity(Entity(content = "╭" + "─" * (GAME_FIELD_WIDTH - 2) + "╮", coords = (MIN_X, MIN_Y)))
+GameController.add_new_entity(Entity(content = "╭" + "─" * (GAME_FIELD_WIDTH - 2) + "╮", coords = (MIN_X, MIN_Y)))
 for y in range(1, GAME_FIELD_HEIGHT - 1):
-    add_new_entity(Entity(content = "│", coords = (MIN_X, y)))
-    add_new_entity(Entity(content = "│", coords = (MAX_X, y)))
-add_new_entity(Entity(content = "╰" + "─" * (GAME_FIELD_WIDTH - 2) + "╯", coords = (MIN_X, MAX_Y)))
+    GameController.add_new_entity(Entity(content = "│", coords = (MIN_X, y)))
+    GameController.add_new_entity(Entity(content = "│", coords = (MAX_X, y)))
+GameController.add_new_entity(Entity(content = "╰" + "─" * (GAME_FIELD_WIDTH - 2) + "╯", coords = (MIN_X, MAX_Y)))
 
-add_new_entity(PlayerManager.footer)
+GameController.add_new_entity(GameController.footer)
 
-PlayerManager.footer = "Press spacebar when you are ready."
-display_game_field()
+GameController.footer = "Press spacebar when you are ready."
+GameController.display_game_field()
 keyboard.wait('space')
 system('cls')
 print("Connecting to the server...")
@@ -129,67 +139,77 @@ try:
     if data == SOCKET_LOBBY_FULL:
         system('cls')
         print("The game has already started, please wait until it is finished. Press spacebar to exit.")
-        PlayerManager.close_game = True
+        GameController.close_game = True
         keyboard.wait('space')
         sys.exit()
     data = recvall(s) # receive player number
 
-    PlayerManager.player_num = int.from_bytes(data)
-    PlayerManager.footer = f"You are player {PlayerManager.player_num}."
-    if PlayerManager.player_num == 1:
-        add_new_entity(Entity(content = "-" * (GAME_FIELD_WIDTH - 2), coords = (1, PLAYER_SIDE_HEIGHT + 2), color = colors.YELLOW))
-        add_new_entity(Entity(content = "-" * (GAME_FIELD_WIDTH - 2), coords = (1, MAX_Y - (PLAYER_SIDE_HEIGHT + 2)), color = colors.BLUE))
-        PlayerManager.my_turn = True
-    elif PlayerManager.player_num == 2:
-        add_new_entity(Entity(content = "-" * (GAME_FIELD_WIDTH - 2), coords = (1, PLAYER_SIDE_HEIGHT + 2), color = colors.BLUE))
-        add_new_entity(Entity(content = "-" * (GAME_FIELD_WIDTH - 2), coords = (1, MAX_Y - (PLAYER_SIDE_HEIGHT + 2)), color = colors.YELLOW))
-    add_new_entity(Entity(content = PHARAOH, coords = PHARAOH_COORDINATES, color = colors.WHITE, public=True))
+    GameController.player_num = int.from_bytes(data)
+    GameController.footer = f"You are player {GameController.player_num}."
+    if GameController.player_num == 1:
+        GameController.add_new_entity(Entity(content = "-" * (GAME_FIELD_WIDTH - 2), coords = (1, PLAYER_SIDE_HEIGHT + 2), color = colors.YELLOW))
+        GameController.add_new_entity(Entity(content = "-" * (GAME_FIELD_WIDTH - 2), coords = (1, MAX_Y - (PLAYER_SIDE_HEIGHT + 2)), color = colors.BLUE))
+        GameController.my_turn = True
+    elif GameController.player_num == 2:
+        GameController.add_new_entity(Entity(content = "-" * (GAME_FIELD_WIDTH - 2), coords = (1, PLAYER_SIDE_HEIGHT + 2), color = colors.BLUE))
+        GameController.add_new_entity(Entity(content = "-" * (GAME_FIELD_WIDTH - 2), coords = (1, MAX_Y - (PLAYER_SIDE_HEIGHT + 2)), color = colors.YELLOW))
+    GameController.add_new_entity(Entity(content = PHARAOH, coords = PHARAOH_COORDINATES, color = colors.WHITE, public=True))
 
-    for guard_card in PlayerManager.guards:
-        add_new_entity(guard_card)
+    for guard_card in GameController.guard_list:
+        GameController.add_new_entity(guard_card)
 
-    add_new_entity(PlayerManager.main_warrior_list)
-    add_new_entity(PlayerManager.main_bandage_list)
-    add_new_entity(PlayerManager.main_building_list)
+    GameController.add_new_entity(GameController.main_warrior_list)
+    GameController.add_new_entity(GameController.main_bandage_list)
+    GameController.add_new_entity(GameController.main_building_list)
 
-    refresh_screen()
+    GameController.refresh_screen()
 
-    send_public_entities()
-    receive_public_entities()
+    GameController.send_public_entities()
+    GameController.receive_public_entities()
 
-    PlayerManager.second_player_joined = True
+    GameController.second_player_joined = True
 
-    while not PlayerManager.close_game:
-        if PlayerManager.my_turn:
-            # PlayerManager.cursor.show()
-            
-            ### TEST
-            keyboard.wait('space')
-            if not len(PlayerManager.main_warrior_list):
-                warrior_card = WarriorCard(power = 0, public = True)
-                bandage_card = BandageCard(state_index = 0, public = True)
-                building_card = BuildingCard(building_type = face_values.HOSPITAL)
-                PlayerManager.main_warrior_list.append(warrior_card)
-                PlayerManager.main_bandage_list.append(bandage_card)
-                PlayerManager.main_building_list.append(building_card)
-            else:
-                warrior_card.upgrade_level()
-                bandage_card.upgrade_level()
-                building_card.upgrade_level()
-
-            refresh_screen()
-            send_public_entities()
-            ###
-
-            end_turn()
+    def test_function() -> None:
+        if not len(GameController.main_warrior_list):
+            GameController.main_warrior_list.append(WarriorCard(power = 0, public = True))
+            GameController.main_bandage_list.append(BandageCard(state_index = 0, public = True))
+            GameController.main_building_list.append(BuildingCard(building_type = face_values.HOSPITAL))
         else:
-            # PlayerManager.cursor.hide()
-            while receive_public_entities():
-                pass
+            GameController.main_warrior_list[0].upgrade_level()
+            GameController.main_bandage_list[0].upgrade_level()
+            GameController.main_building_list[0].upgrade_level()
+
+        GameController.refresh_screen()
+        GameController.send_public_entities()
+
+        GameController.end_turn()
+
+    GameController.controls = {
+        "left": lambda: (GameController.cursor.select_previous(), GameController.refresh_screen()),
+        "right": lambda: (GameController.cursor.select_next(), GameController.refresh_screen()),
+        "space": test_function
+    }
+
+    while not GameController.close_game:
+        if GameController.my_turn:
+            GameController.cursor.show()
+            GameController.refresh_screen()
+
+            while GameController.my_turn:
+                key = keyboard.read_key()
+                if key not in GameController.controls:
+                    continue
+                else:
+                    GameController.controls[key]()
+        else:
+            GameController.cursor.hide()
+            GameController.refresh_screen()
+            while GameController.receive_public_entities():
+                GameController.refresh_screen()
 
 except (ConnectionRefusedError, TimeoutError, ConnectionResetError):
     system('cls') 
-    print(("Your opponent has disconnected, unable to continue." if PlayerManager.second_player_joined else "Server is offline, unable to connect.") + " Press spacebar to exit.")
-    PlayerManager.close_game = True
+    print(("Your opponent has disconnected, unable to continue." if GameController.second_player_joined else "Server is offline, unable to connect.") + " Press spacebar to exit.")
+    GameController.close_game = True
     keyboard.wait('space')
     sys.exit()
