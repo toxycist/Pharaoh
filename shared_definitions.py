@@ -8,6 +8,13 @@ from _collections_abc import Iterable
 from collections import namedtuple
 from sortedcontainers import SortedList
 
+GAME_FIELD_WIDTH: int = 81
+GAME_FIELD_HEIGHT: int = 21  
+MIN_X: int = 0
+MIN_Y: int = 0
+MAX_X: int = GAME_FIELD_WIDTH - 1
+MAX_Y: int = GAME_FIELD_HEIGHT - 1
+
 class colors:
     NONE: None = None
     GRAY: str = '\033[90m'
@@ -108,7 +115,14 @@ class Cursor(Entity):
     def select(self, index_in_scope: int) -> None:
         self.selected = self.selectable_scope[index_in_scope]
         self.__scope.discard(self)
-        self.coords = Coordinates(self.selected.coords.x, self.selected.coords.y + 1)
+
+        if (self.selected.coords.y == MAX_Y - 1):
+            self.coords = Coordinates(self.selected.coords.x, self.selected.coords.y - 1)
+            self.content = CURSOR_DOWN
+        else:
+            self.coords = Coordinates(self.selected.coords.x, self.selected.coords.y + 1)
+            self.content = CURSOR_UP
+            
         self.__scope.add(self)
     
     def select_next(self) -> None:

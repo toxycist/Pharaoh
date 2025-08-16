@@ -10,12 +10,6 @@ dotenv.load_dotenv()
 HOST: str | None = getenv('IP')
 PORT: int = 1717
 
-GAME_FIELD_WIDTH: int = 81
-GAME_FIELD_HEIGHT: int = 21  
-MIN_X: int = 0
-MIN_Y: int = 0
-MAX_X: int = GAME_FIELD_WIDTH - 1
-MAX_Y: int = GAME_FIELD_HEIGHT - 1
 PLAYER_SIDE_HEIGHT: int = 4
 # coordinates should always be in the form of (x, y)
 PHARAOH_COORDINATES: Tuple[int, int] = (10, MAX_Y - 3)
