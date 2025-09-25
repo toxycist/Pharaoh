@@ -1,10 +1,43 @@
-import keyboard
 import dotenv
-from os import system, getenv
+from os import system, getenv, name as _os_name
 import random
 from shared_definitions import *
 import sys
 import math
+
+if _os_name == "nt":
+    import msvcrt
+    def getch() -> str:
+        return str(msvcrt.getch().decode("utf-8", errors="ignore"))
+else:
+    import tty
+    import termios
+    def getch() -> str:
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            ch = sys.stdin.read(1)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        return ch
+    
+class escape_sequences:
+    if _os_name == "nt":
+        ESCAPE_SEQUENCE_LENGTH = 2
+
+        ESCAPE = "\xe0"
+        ARROW_LEFT = "\xe0K"
+        ARROW_RIGHT = "\xe0M"
+    else:
+        ESCAPE_SEQUENCE_LENGTH = 3
+
+        ESCAPE = "\x1b"
+        ARROW_LEFT = "\x1b[D"
+        ARROW_RIGHT = "\x1b[C"
+
+def clear_screen() -> None:
+    system('cls' if _os_name == 'nt' else 'clear')
 
 dotenv.load_dotenv()
 HOST: str | None = getenv('IP')
@@ -65,7 +98,7 @@ class GameController:
     
     @classmethod
     def refresh_screen(cls) -> None:
-        system('cls')
+        clear_screen()
         cls.display_game_field()
 
     @classmethod
@@ -119,9 +152,9 @@ GameController.add_new_entity(Entity(content = "╰" + "─" * (GAME_FIELD_WIDTH
 GameController.add_new_entity(GameController.footer)
 
 GameController.footer = "Press spacebar when you are ready."
-GameController.display_game_field()
-keyboard.wait('space')
-system('cls')
+GameController.refresh_screen()
+while ' ' != getch(): pass
+clear_screen()
 print("Connecting to the server...")
 
 s: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -131,10 +164,10 @@ try:
     sendall_with_end(s, SOCKET_CONNECTION_ESTABLISHED)
     data: bytes = recvall(s) # receive SOCKET_CONNECTION_ESTABLISHED or SOCKET_LOBBY_FULL
     if data == SOCKET_LOBBY_FULL:
-        system('cls')
+        clear_screen()
         print("The game has already started, please wait until it is finished. Press spacebar to exit.")
         GameController.close_game = True
-        keyboard.wait('space')
+        while ' ' != getch(): pass
         sys.exit()
     data = recvall(s) # receive player number
 
@@ -179,9 +212,9 @@ try:
         GameController.end_turn()
 
     GameController.controls = {
-        "left": lambda: (GameController.cursor.select_previous(), GameController.refresh_screen()),
-        "right": lambda: (GameController.cursor.select_next(), GameController.refresh_screen()),
-        "space": test_function
+        escape_sequences.ARROW_LEFT: lambda: (GameController.cursor.select_previous(), GameController.refresh_screen()),
+        escape_sequences.ARROW_RIGHT: lambda: (GameController.cursor.select_next(), GameController.refresh_screen()),
+        ' ': test_function
     }
 
     while not GameController.close_game:
@@ -190,12 +223,15 @@ try:
             GameController.refresh_screen()
 
             while GameController.my_turn:
-                event = keyboard.read_event()
-                if event.event_type == keyboard.KEY_DOWN:
-                    if event.name not in GameController.controls:
-                        continue
-                    else:
-                        GameController.controls[event.name]()
+                key = getch()
+                if key == escape_sequences.ESCAPE:
+                    for i in range(escape_sequences.ESCAPE_SEQUENCE_LENGTH - 1):
+                        key += getch()
+
+                if key not in GameController.controls:
+                    continue
+                else:
+                    GameController.controls[key]()
         else:
             GameController.cursor.hide()
             GameController.refresh_screen()
@@ -203,8 +239,8 @@ try:
                 GameController.refresh_screen()
 
 except (ConnectionRefusedError, TimeoutError, ConnectionResetError):
-    system('cls') 
+    clear_screen()
     print(("Your opponent has disconnected, unable to continue." if GameController.second_player_joined else "Server is offline, unable to connect.") + " Press spacebar to exit.")
     GameController.close_game = True
-    keyboard.wait('space')
+    while ' ' != getch(): pass
     sys.exit()
