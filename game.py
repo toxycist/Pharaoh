@@ -69,10 +69,28 @@ class GameController:
 
     def __new__(cls):
         raise RuntimeError(f"class {cls} is not meant to be instantiated")
+    
+    @classmethod
+    def add_new_entity(cls, add_to: SortedList, entity: Entity) -> None:
+        add_to.add(entity) #TODO: replace with just my_entities.add() everywhere
 
     @classmethod
-    def add_new_entity(cls, entity: Entity) -> None:
-        cls.my_entities.add(entity)
+    def display_entity(cls, entity_to_display: Entity, start_x: int, start_y: int) -> tuple[int, int]:
+        x = start_x
+        y = start_y
+        while entity_to_display.coords != (x, y):
+            if entity_to_display.coords.y == y:
+                if entity_to_display.coords.x < x:
+                    break
+                print(' ', end='')
+                x += 1
+            else:
+                print()
+                y += 1
+                x = 0
+        print(entity_to_display, end='')
+        x += len(entity_to_display.content)
+        return (x, y)
 
     @classmethod
     def display_game_field(cls) -> None:
@@ -80,20 +98,11 @@ class GameController:
         x: int = 0
         y: int = 0
         for entity in all_entities:
-            while entity.coords != (x, y):
-                if entity.coords.y == y:
-                    if entity.coords.x < x:
-                        break
-                    print(' ', end='')
-                    x += 1
-                else:
-                    print()
-                    y += 1
-                    x = 0
-            candidate_entities: List[Entity] = [e for e in all_entities if e.coords == entity.coords and e.display_priority >= 0]
-            entity_to_display: Entity = max(candidate_entities, key = lambda e: e.display_priority, default = None)
-            print(entity_to_display, end='')
-            x += len(entity_to_display.content)
+            x, y = cls.display_entity(entity_to_display = entity, start_x = x, start_y = y)
+            if isinstance(entity, Iterable):
+                for e in entity:
+                    x, y = cls.display_entity(entity_to_display = e, start_x = x, start_y = y)
+            
         print(cls.footer)
     
     @classmethod
@@ -119,8 +128,8 @@ class GameController:
             received_entities: List[Entity] = pickle.loads(recvall(s))
             cls.received_entities.clear() # clear previously received entities
             for entity in received_entities:
-                entity.coords = Coordinates(entity.coords.x, abs(entity.coords.y - MAX_Y)) # reverse y coordinate of the received entity, so it will be displayed on the other player's side
-                cls.received_entities.add(entity)
+                entity.set_coords(Coordinates(entity.coords.x, abs(entity.coords.y - MAX_Y))) # reverse y coordinate of the received entity, so it will be displayed on the other player's side
+                cls.add_new_entity(cls.received_entities, entity)
             return 1
         elif encoded_data == SOCKET_YOUR_TURN:
             cls.my_turn = True
@@ -143,13 +152,13 @@ def draw_a_card(card_type: type[Entity], to_cardlist: CardList, public: bool) ->
     to_cardlist.append(card_type(power = picked_card_power, public = True))
 #####
 
-GameController.add_new_entity(Entity(content = "╭" + "─" * (GAME_FIELD_WIDTH - 2) + "╮", coords = (MIN_X, MIN_Y)))
+GameController.add_new_entity(GameController.my_entities, Entity(content = "╭" + "─" * (GAME_FIELD_WIDTH - 2) + "╮", coords = (MIN_X, MIN_Y)))
 for y in range(1, GAME_FIELD_HEIGHT - 1):
-    GameController.add_new_entity(Entity(content = "│", coords = (MIN_X, y)))
-    GameController.add_new_entity(Entity(content = "│", coords = (MAX_X, y)))
-GameController.add_new_entity(Entity(content = "╰" + "─" * (GAME_FIELD_WIDTH - 2) + "╯", coords = (MIN_X, MAX_Y)))
+    GameController.add_new_entity(GameController.my_entities, Entity(content = "│", coords = (MIN_X, y)))
+    GameController.add_new_entity(GameController.my_entities, Entity(content = "│", coords = (MAX_X, y)))
+GameController.add_new_entity(GameController.my_entities, Entity(content = "╰" + "─" * (GAME_FIELD_WIDTH - 2) + "╯", coords = (MIN_X, MAX_Y)))
 
-GameController.add_new_entity(GameController.footer)
+GameController.add_new_entity(GameController.my_entities, GameController.footer)
 
 GameController.footer = "Press spacebar when you are ready."
 GameController.refresh_screen()
@@ -174,20 +183,20 @@ try:
     GameController.player_num = int.from_bytes(data)
     GameController.footer = f"You are player {GameController.player_num}."
     if GameController.player_num == 1:
-        GameController.add_new_entity(Entity(content = "-" * (GAME_FIELD_WIDTH - 2), coords = (1, PLAYER_SIDE_HEIGHT + 2), color = colors.YELLOW))
-        GameController.add_new_entity(Entity(content = "-" * (GAME_FIELD_WIDTH - 2), coords = (1, MAX_Y - (PLAYER_SIDE_HEIGHT + 2)), color = colors.BLUE))
+        GameController.add_new_entity(GameController.my_entities, Entity(content = "-" * (GAME_FIELD_WIDTH - 2), coords = (1, PLAYER_SIDE_HEIGHT + 2), color = colors.YELLOW))
+        GameController.add_new_entity(GameController.my_entities, Entity(content = "-" * (GAME_FIELD_WIDTH - 2), coords = (1, MAX_Y - (PLAYER_SIDE_HEIGHT + 2)), color = colors.BLUE))
         GameController.my_turn = True
     elif GameController.player_num == 2:
-        GameController.add_new_entity(Entity(content = "-" * (GAME_FIELD_WIDTH - 2), coords = (1, PLAYER_SIDE_HEIGHT + 2), color = colors.BLUE))
-        GameController.add_new_entity(Entity(content = "-" * (GAME_FIELD_WIDTH - 2), coords = (1, MAX_Y - (PLAYER_SIDE_HEIGHT + 2)), color = colors.YELLOW))
-    GameController.add_new_entity(Entity(content = PHARAOH, coords = PHARAOH_COORDINATES, color = colors.WHITE, public=True))
+        GameController.add_new_entity(GameController.my_entities, Entity(content = "-" * (GAME_FIELD_WIDTH - 2), coords = (1, PLAYER_SIDE_HEIGHT + 2), color = colors.BLUE))
+        GameController.add_new_entity(GameController.my_entities, Entity(content = "-" * (GAME_FIELD_WIDTH - 2), coords = (1, MAX_Y - (PLAYER_SIDE_HEIGHT + 2)), color = colors.YELLOW))
+    GameController.add_new_entity(GameController.my_entities, Entity(content = PHARAOH, coords = PHARAOH_COORDINATES, color = colors.WHITE, public=True))
 
     for guard_card in GameController.guard_list:
-        GameController.add_new_entity(guard_card)
+        GameController.add_new_entity(GameController.my_entities, guard_card)
 
-    GameController.add_new_entity(GameController.main_warrior_list)
-    GameController.add_new_entity(GameController.main_bandage_list)
-    GameController.add_new_entity(GameController.main_building_list)
+    GameController.add_new_entity(GameController.my_entities, GameController.main_warrior_list)
+    GameController.add_new_entity(GameController.my_entities, GameController.main_bandage_list)
+    GameController.add_new_entity(GameController.my_entities, GameController.main_building_list)
 
     GameController.refresh_screen()
 
@@ -202,9 +211,7 @@ try:
             GameController.main_bandage_list.append(BandageCard(state_index = 0, public = True))
             GameController.main_building_list.append(BuildingCard(building_type = face_values.HOSPITAL))
         else:
-            GameController.main_warrior_list[0].upgrade_level()
-            GameController.main_bandage_list[0].upgrade_level()
-            GameController.main_building_list[0].upgrade_level()
+            GameController.cursor.selected.upgrade_level()
 
         GameController.refresh_screen()
         GameController.send_public_entities()
