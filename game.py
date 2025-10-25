@@ -8,7 +8,7 @@ import math
 if _os_name == "nt":
     import msvcrt
     def getch() -> str:
-        return str(msvcrt.getch().decode("utf-8", errors="ignore"))
+        return msvcrt.getch().decode("latin-1")
 else:
     import tty
     import termios
