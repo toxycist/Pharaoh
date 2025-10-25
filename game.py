@@ -69,10 +69,6 @@ class GameController:
 
     def __new__(cls):
         raise RuntimeError(f"class {cls} is not meant to be instantiated")
-    
-    @classmethod
-    def add_new_entity(cls, add_to: SortedList, entity: Entity) -> None:
-        add_to.add(entity) #TODO: replace with just my_entities.add() everywhere
 
     @classmethod
     def display_entity(cls, entity_to_display: Entity, start_x: int, start_y: int) -> tuple[int, int]:
@@ -129,7 +125,7 @@ class GameController:
             cls.received_entities.clear() # clear previously received entities
             for entity in received_entities:
                 entity.set_coords(Coordinates(entity.coords.x, abs(entity.coords.y - MAX_Y))) # reverse y coordinate of the received entity, so it will be displayed on the other player's side
-                cls.add_new_entity(cls.received_entities, entity)
+                cls.received_entities.add(entity)
             return 1
         elif encoded_data == SOCKET_YOUR_TURN:
             cls.my_turn = True
@@ -152,13 +148,13 @@ def draw_a_card(card_type: type[Entity], to_cardlist: CardList, public: bool) ->
     to_cardlist.append(card_type(power = picked_card_power, public = True))
 #####
 
-GameController.add_new_entity(GameController.my_entities, Entity(content = "╭" + "─" * (GAME_FIELD_WIDTH - 2) + "╮", coords = (MIN_X, MIN_Y)))
+GameController.my_entities.add(Entity(content = "╭" + "─" * (GAME_FIELD_WIDTH - 2) + "╮", coords = (MIN_X, MIN_Y)))
 for y in range(1, GAME_FIELD_HEIGHT - 1):
-    GameController.add_new_entity(GameController.my_entities, Entity(content = "│", coords = (MIN_X, y)))
-    GameController.add_new_entity(GameController.my_entities, Entity(content = "│", coords = (MAX_X, y)))
-GameController.add_new_entity(GameController.my_entities, Entity(content = "╰" + "─" * (GAME_FIELD_WIDTH - 2) + "╯", coords = (MIN_X, MAX_Y)))
+    GameController.my_entities.add(Entity(content = "│", coords = (MIN_X, y)))
+    GameController.my_entities.add(Entity(content = "│", coords = (MAX_X, y)))
+GameController.my_entities.add(Entity(content = "╰" + "─" * (GAME_FIELD_WIDTH - 2) + "╯", coords = (MIN_X, MAX_Y)))
 
-GameController.add_new_entity(GameController.my_entities, GameController.footer)
+GameController.my_entities.add(GameController.footer)
 
 GameController.footer = "Press spacebar when you are ready."
 GameController.refresh_screen()
@@ -183,20 +179,20 @@ try:
     GameController.player_num = int.from_bytes(data)
     GameController.footer = f"You are player {GameController.player_num}."
     if GameController.player_num == 1:
-        GameController.add_new_entity(GameController.my_entities, Entity(content = "-" * (GAME_FIELD_WIDTH - 2), coords = (1, PLAYER_SIDE_HEIGHT + 2), color = colors.YELLOW))
-        GameController.add_new_entity(GameController.my_entities, Entity(content = "-" * (GAME_FIELD_WIDTH - 2), coords = (1, MAX_Y - (PLAYER_SIDE_HEIGHT + 2)), color = colors.BLUE))
+        GameController.my_entities.add(Entity(content = "-" * (GAME_FIELD_WIDTH - 2), coords = (1, PLAYER_SIDE_HEIGHT + 2), color = colors.YELLOW))
+        GameController.my_entities.add(Entity(content = "-" * (GAME_FIELD_WIDTH - 2), coords = (1, MAX_Y - (PLAYER_SIDE_HEIGHT + 2)), color = colors.BLUE))
         GameController.my_turn = True
     elif GameController.player_num == 2:
-        GameController.add_new_entity(GameController.my_entities, Entity(content = "-" * (GAME_FIELD_WIDTH - 2), coords = (1, PLAYER_SIDE_HEIGHT + 2), color = colors.BLUE))
-        GameController.add_new_entity(GameController.my_entities, Entity(content = "-" * (GAME_FIELD_WIDTH - 2), coords = (1, MAX_Y - (PLAYER_SIDE_HEIGHT + 2)), color = colors.YELLOW))
-    GameController.add_new_entity(GameController.my_entities, Entity(content = PHARAOH, coords = PHARAOH_COORDINATES, color = colors.WHITE, public=True))
+        GameController.my_entities.add(Entity(content = "-" * (GAME_FIELD_WIDTH - 2), coords = (1, PLAYER_SIDE_HEIGHT + 2), color = colors.BLUE))
+        GameController.my_entities.add(Entity(content = "-" * (GAME_FIELD_WIDTH - 2), coords = (1, MAX_Y - (PLAYER_SIDE_HEIGHT + 2)), color = colors.YELLOW))
+    GameController.my_entities.add(Entity(content = PHARAOH, coords = PHARAOH_COORDINATES, color = colors.WHITE, public=True))
 
     for guard_card in GameController.guard_list:
-        GameController.add_new_entity(GameController.my_entities, guard_card)
+        GameController.my_entities.add(guard_card)
 
-    GameController.add_new_entity(GameController.my_entities, GameController.main_warrior_list)
-    GameController.add_new_entity(GameController.my_entities, GameController.main_bandage_list)
-    GameController.add_new_entity(GameController.my_entities, GameController.main_building_list)
+    GameController.my_entities.add(GameController.main_warrior_list)
+    GameController.my_entities.add(GameController.main_bandage_list)
+    GameController.my_entities.add(GameController.main_building_list)
 
     GameController.refresh_screen()
 
@@ -205,23 +201,39 @@ try:
 
     GameController.second_player_joined = True
 
-    def test_function() -> None:
-        if not len(GameController.main_warrior_list):
-            GameController.main_warrior_list.append(WarriorCard(power = 0, public = True))
-            GameController.main_bandage_list.append(BandageCard(state_index = 0, public = True))
-            GameController.main_building_list.append(BuildingCard(building_type = face_values.HOSPITAL))
-        else:
-            GameController.cursor.selected.upgrade_level()
-
-        GameController.refresh_screen()
-        GameController.send_public_entities()
-
-        GameController.end_turn()
-
     GameController.controls = {
-        escape_sequences.ARROW_LEFT: lambda: (GameController.cursor.select_previous(), GameController.refresh_screen()),
-        escape_sequences.ARROW_RIGHT: lambda: (GameController.cursor.select_next(), GameController.refresh_screen()),
-        ' ': test_function
+        escape_sequences.ARROW_LEFT: lambda: (
+            GameController.cursor.select_previous(), 
+            GameController.refresh_screen()
+            ),
+        escape_sequences.ARROW_RIGHT: lambda: (
+            GameController.cursor.select_next(), 
+            GameController.refresh_screen()
+            ),
+        ' ': lambda: (
+            GameController.cursor.selected.upgrade_level(), 
+            GameController.refresh_screen(), 
+            GameController.send_public_entities(), 
+            GameController.end_turn()
+            ),
+        '1': lambda: (
+            GameController.main_warrior_list.append(WarriorCard(power = 0, public = True)), 
+            GameController.refresh_screen(), 
+            GameController.send_public_entities(), 
+            GameController.end_turn()
+            ),
+        '2': lambda: (
+            GameController.main_bandage_list.append(BandageCard(state_index = 0, public = True)), 
+            GameController.refresh_screen(), 
+            GameController.send_public_entities(), 
+            GameController.end_turn()
+            ),
+        '3': lambda: (
+            GameController.main_building_list.append(BuildingCard(building_type = face_values.HOSPITAL)), 
+            GameController.refresh_screen(), 
+            GameController.send_public_entities(), 
+            GameController.end_turn()
+            )
     }
 
     while not GameController.close_game:

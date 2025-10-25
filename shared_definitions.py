@@ -174,7 +174,6 @@ class Card(Entity):
 
     @overload
     def __init__(self, state_index: int, coords: Tuple[int, int] = None, selectable: bool = True, public: bool = False) -> None: ...
-    
     @overload
     def __init__(self, state: CardState, coords: Tuple[int, int] = None, selectable: bool = True, public: bool = False) -> None: ...
 
@@ -281,7 +280,7 @@ class CardList(Entity):
     
     @property
     def content(self) -> str:
-        return remove_color_codes(repr(self))
+        return repr(self)
     
     @property
     def label_string(self) -> str:
@@ -294,22 +293,27 @@ class CardList(Entity):
     def remove(self, card: Card) -> None:
         self.__cards.remove(card)
     
-    def append(self, card: Card) -> None: #TODO: use update_card_coordinates
-        card.coords = Coordinates(self.coords.x + len(self.label_string) + ((len(self.__cards) + 1) * 2), self.coords.y) # index is multiplied by two, because the cards are separated by whitespaces
+    def append(self, card: Card) -> None:
         self.__cards.append(card)
+        self.update_card_coordinates(index = len(self.__cards) - 1)
     
     def __setitem__(self, index: int, card: Card) -> None:
         card.coords = self.__cards[index].coords
         self.__cards[index] = card
 
-    def update_card_coordinates(self, start: int, end: int):
-        for i in range(start, end):
-            self.__cards[i].coords = Coordinates(self.coords.x + len(self.label_string) + ((i + 1) * 2), self.coords.y) # index is multiplied by two, because the cards are separated by whitespaces
+    @overload
+    def update_card_coordinates(self, begin: int, end: int) -> None: ...
+    @overload
+    def update_card_coordinates(self, index: int) -> None: ...
+
+    def update_card_coordinates(self, begin: int = None, end: int = None, index: int = 0):
+        for i in range(begin if begin is not None else index, end if end is not None else (index + 1)):
+            self.__cards[i].coords = Coordinates(self.coords.x + len(self.label_string) + (i * 2 + 1), self.coords.y) # index is multiplied by two, because the cards are separated by whitespaces
 
     def set_coords(self, new_coords) -> None:
         if self.coords != new_coords:
             super().set_coords(new_coords)
-            self.update_card_coordinates(0, len(self.__cards))
+            self.update_card_coordinates(begin = 0, end = len(self.__cards))
 
     def __getitem__(self, index: int) -> Card:
         return self.__cards[index]
