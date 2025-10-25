@@ -68,7 +68,7 @@ def index_by_identity(iterable: Iterable, obj: Any) -> int | None:
     return None
 
 class Entity:
-    def __init__(self, content: str, color: str = colors.GRAY, display_priority: int = 0, coords: Tuple[int, int] = None, selectable: bool = False, public: bool = False) -> None:
+    def __init__(self, content: str, color: str = colors.GRAY, display_priority: int = 0, coords: Coordinates = None, selectable: bool = False, public: bool = False) -> None:
         if not hasattr(self, 'content'):
             self.content: str = content
         if not hasattr(self, 'color'):
@@ -89,6 +89,9 @@ class Entity:
             return_str = self.color + self.content + colors.ENDC
 
         return return_str
+    
+    def set_coords(self, new_coords: Coordinates) -> None:
+        self.coords = new_coords
 
 class Cursor(Entity):
     def __init__(self, scope: SortedList[Entity] = []) -> None:
@@ -98,7 +101,16 @@ class Cursor(Entity):
 
     @property
     def selectable_scope(self) -> List[Entity]:
-        return [e for e in self.__scope if e.selectable]
+        scope: List[Entity] = []
+        for entity in self.__scope:
+            if entity.selectable:
+                scope.append(entity)
+            if isinstance(entity, CardList):
+                for e in entity:
+                    if e.selectable:
+                        scope.append(e)
+
+        return scope
     
     @property
     def index_in_scope(self) -> int | None:
@@ -162,7 +174,6 @@ class Card(Entity):
 
     @overload
     def __init__(self, state_index: int, coords: Tuple[int, int] = None, selectable: bool = True, public: bool = False) -> None: ...
-    
     @overload
     def __init__(self, state: CardState, coords: Tuple[int, int] = None, selectable: bool = True, public: bool = False) -> None: ...
 
@@ -265,30 +276,44 @@ class CardList(Entity):
         super().__init__(content = self.content, coords = coords, color = colors.NONE, selectable = selectable, public = public)
     
     def __repr__(self) -> str:
-        string_repr: str = self.card_type.TYPE_NAME + ":"
-        if self.__cards:
-            for card in self.__cards:
-                string_repr += " " + repr(card)
-        else:
-            string_repr += " ***"
-        return string_repr
+        return self.label_string
     
     @property
     def content(self) -> str:
-        return remove_color_codes(repr(self))
+        return repr(self)
+    
+    @property
+    def label_string(self) -> str:
+        return self.card_type.TYPE_NAME + ":"
     
     def get_public_slice(self) -> 'CardList':
-        public_cards: List[Card] = [public_card for public_card in self.__cards if public_card.public]
+        public_cards: List[Card] = [card for card in self.__cards if card.public]
         return CardList(coords = self.coords, card_type = self.card_type, cards = public_cards, public = True)
-    
+
     def remove(self, card: Card) -> None:
         self.__cards.remove(card)
     
     def append(self, card: Card) -> None:
         self.__cards.append(card)
+        self.update_card_coordinates(index = len(self.__cards) - 1)
     
     def __setitem__(self, index: int, card: Card) -> None:
+        card.coords = self.__cards[index].coords
         self.__cards[index] = card
+
+    @overload
+    def update_card_coordinates(self, begin: int, end: int) -> None: ...
+    @overload
+    def update_card_coordinates(self, index: int) -> None: ...
+
+    def update_card_coordinates(self, begin: int = None, end: int = None, index: int = 0):
+        for i in range(begin if begin is not None else index, end if end is not None else (index + 1)):
+            self.__cards[i].coords = Coordinates(self.coords.x + len(self.label_string) + (i * 2 + 1), self.coords.y) # index is multiplied by two, because the cards are separated by whitespaces
+
+    def set_coords(self, new_coords) -> None:
+        if self.coords != new_coords:
+            super().set_coords(new_coords)
+            self.update_card_coordinates(begin = 0, end = len(self.__cards))
 
     def __getitem__(self, index: int) -> Card:
         return self.__cards[index]
@@ -298,6 +323,9 @@ class CardList(Entity):
     
     def __len__(self) -> int:
         return len(self.__cards)
+    
+    def __iter__(self):
+        return iter(self.__cards) 
     
     def __contains__(self, card: Card) -> bool:
         if not isinstance(card, self.card_type):

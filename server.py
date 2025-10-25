@@ -6,6 +6,8 @@ PORT: int = 1717
 
 connections: Dict[Tuple[socket.socket, Any], int] = {}
 
+PLAYER_COLORS = [colors.BLUE, colors.YELLOW]
+
 def poke_the_client(conn: socket.socket, player_num: int) -> None:
     while True:
         time.sleep(0.5)
@@ -33,20 +35,27 @@ def reject_client(conn: socket.socket, addr: Any) -> None:
             print(f"{addr} disconnected")
             return
 
+def print_player_info(player_color: str, player_addr: Any, player_num: int, info):
+    print(player_color + f"{addr} [PLAYER {player_num}] " + colors.ENDC + info)
+
+def print_player_msg(player_color: str, player_addr: Any, player_num: int, msg):
+    print(player_color + f"{addr} [PLAYER {player_num}]: " + colors.ENDC + msg)
+
 def handle_client(conn: socket.socket, addr: Any) -> None:
     player_num: int = connections[(conn, addr)]
+    player_color = PLAYER_COLORS[player_num - 1]
 
     poke_the_client_thread: threading.Thread = threading.Thread(target=poke_the_client, args=(conn, player_num))
     poke_the_client_thread.start()
 
-    print(f"{addr} [PLAYER {player_num}] connected")
+    print_player_info(player_color, addr, player_num, "connected")
     with conn:
         try:
             other_player: socket.socket | None = None
             while True:
                 encoded_data: bytes = recvall(conn)
                 decoded_data: str = encoded_data.decode()
-                print(f"{addr} [PLAYER {player_num}]: {decoded_data}")
+                print_player_msg(player_color, addr, player_num, decoded_data)
                 if encoded_data == SOCKET_CONNECTION_ESTABLISHED:
                     sendall_with_end(conn, SOCKET_CONNECTION_ESTABLISHED)
                     sendall_with_end(conn, player_num.to_bytes())
@@ -54,7 +63,12 @@ def handle_client(conn: socket.socket, addr: Any) -> None:
                 elif encoded_data == SOCKET_SHARED_ENTITIES_UPDATE:
                     public_entities: List[Entity] = pickle.loads(recvall(conn))
                     for entity in public_entities:
-                        print(f"{addr} [PLAYER {player_num}] Received entity [{entity}] at {entity.coords}")
+                        print_player_info(player_color, addr, player_num, f"Received entity [{entity}] at {entity.coords}")
+
+                        if isinstance(entity, Iterable) and len(entity) > 0:
+                            print_player_info(player_color, addr, player_num, f"Entity [{entity}] contains:")
+                            for e in entity:
+                                print_player_info(player_color, addr, player_num, f"[{e}] at {e.coords}")
 
                     entities_sent: bool = False
                     while not entities_sent:
@@ -70,6 +84,7 @@ def handle_client(conn: socket.socket, addr: Any) -> None:
             return
 
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind((HOST, PORT))
     s.listen()
     print(f"Listening on {HOST}:{PORT}")
