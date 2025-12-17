@@ -1,3 +1,4 @@
+import select
 import time
 from shared_definitions import *
 
@@ -8,50 +9,33 @@ connections: Dict[Tuple[socket.socket, Any], int] = {}
 
 PLAYER_COLORS = [colors.BLUE, colors.YELLOW]
 
-def poke_the_client(conn: socket.socket, player_num: int) -> None:
-    while True:
-        time.sleep(0.5)
-        if conn.fileno() == -1:
-            # if len(connections) == 0 it means the dictionary is being cleaned up, else just a normal disconnection
-            if len(connections) == 0:
-                print(f"{addr} [PLAYER {player_num}] terminated.")
-            else:
-                print(f"{addr} [PLAYER {player_num}] disconnected. Unable to continue the game session. Terminating connections...")
-                for conn_addr in list(connections.keys()):
-                    conn_addr[0].close()
-                connections.clear()
-            return
+def print_player_info(player_color: str, player_addr: Any, player_num: int, info):
+    print(player_color + f"{player_addr} [PLAYER {player_num}] " + colors.ENDC + info)
+
+def print_player_msg(player_color: str, player_addr: Any, player_num: int, msg):
+    print(player_color + f"{player_addr} [PLAYER {player_num}]: " + colors.ENDC + msg)
 
 def reject_client(conn: socket.socket, addr: Any) -> None:
-    print(f"{addr} connected. Lobby is full, rejecting...")
+    print_player_info(colors.RED, addr, len(PLAYER_COLORS) + 1, "connected. Lobby is full, rejecting...")
     with conn:
         try:
             sendall_with_end(conn, SOCKET_LOBBY_FULL)
             data: bytes = b""
-            while data != b"":
+            while data:
                 data = conn.recv(1024) # wait until the client disconnects
             return
         finally:
-            print(f"{addr} disconnected")
+            print_player_info(colors.RED, addr, len(PLAYER_COLORS) + 1, "disconnected")
             return
-
-def print_player_info(player_color: str, player_addr: Any, player_num: int, info):
-    print(player_color + f"{addr} [PLAYER {player_num}] " + colors.ENDC + info)
-
-def print_player_msg(player_color: str, player_addr: Any, player_num: int, msg):
-    print(player_color + f"{addr} [PLAYER {player_num}]: " + colors.ENDC + msg)
-
+        
 def handle_client(conn: socket.socket, addr: Any) -> None:
     player_num: int = connections[(conn, addr)]
     player_color = PLAYER_COLORS[player_num - 1]
 
-    poke_the_client_thread: threading.Thread = threading.Thread(target=poke_the_client, args=(conn, player_num))
-    poke_the_client_thread.start()
-
     print_player_info(player_color, addr, player_num, "connected")
     with conn:
         try:
-            other_player: socket.socket | None = None
+            other_player = None
             while True:
                 encoded_data: bytes = recvall(conn)
                 decoded_data: str = encoded_data.decode()
@@ -60,6 +44,7 @@ def handle_client(conn: socket.socket, addr: Any) -> None:
                     sendall_with_end(conn, SOCKET_CONNECTION_ESTABLISHED)
                     sendall_with_end(conn, player_num.to_bytes())
                     connections[(conn, addr)] = "ready"
+
                 elif encoded_data == SOCKET_SHARED_ENTITIES_UPDATE:
                     public_entities: List[Entity] = pickle.loads(recvall(conn))
                     for entity in public_entities:
@@ -71,16 +56,35 @@ def handle_client(conn: socket.socket, addr: Any) -> None:
                                 print_player_info(player_color, addr, player_num, f"[{e}] at {e.coords}")
 
                     entities_sent: bool = False
-                    while not entities_sent:
-                        for other_conn_addr in list(connections.keys()):
-                            if other_conn_addr != (conn, addr) and connections[other_conn_addr] == "ready":
-                                other_player: socket = other_conn_addr[0]
+                    while not entities_sent: # this could be an endless loop if the second player hasn't yet joined, so if this player disconnects, we need to handle that
+                        if len(connections) > 1:
+                            other_conn_addr = next((conn_addr for conn_addr in list(connections.keys()) if conn_addr != (conn, addr)), None)
+                            if other_conn_addr and connections[other_conn_addr] == "ready":
+                                other_player: socket.socket = other_conn_addr[0]
                                 sendall_with_end(other_player, SOCKET_SHARED_ENTITIES_UPDATE)
                                 sendall_with_end(other_player, pickle.dumps(public_entities))
                                 entities_sent = True
+                        else:
+                            incoming_data, _, _ = select.select([conn], [], [], 1.0) # timeout for recv is set to 1 second
+                            if incoming_data: # probably a disconnection, because the client should not have anything to say at this point
+                                recvall(conn)
+                            else:
+                                continue
+
                 elif encoded_data == SOCKET_YOUR_TURN:
                     sendall_with_end(other_player, SOCKET_YOUR_TURN)
-        except Exception:
+        except ConnectionError:
+            if len(connections) == 0: # the error is initiated by another connection, which has already cleared up the list of connections
+                conn.close()
+                print_player_info(player_color, addr, player_num, "terminated")
+            else: # the error is initiated by this connection
+                conn.close()
+                print_player_info(player_color, addr, player_num, "disconnected.")
+                if other_player:
+                    print("Unable to continue the game session. Terminating remaining connections...")
+                    sendall_with_end(other_player, SOCKET_TERMINATION_REQUEST)
+                    other_player.shutdown(socket.SHUT_RDWR)
+                connections.clear()
             return
 
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -94,7 +98,7 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         addr: Any
         conn, addr = s.accept()
         if len(connections) < 2:
-            connections[(conn, addr)] = (len(connections) + 1) # set player number
+            connections[(conn, addr)] = len(connections) + 1 # set player number
             client_thread: threading.Thread = threading.Thread(target=handle_client, args=(conn, addr))
             client_thread.start()
         else:

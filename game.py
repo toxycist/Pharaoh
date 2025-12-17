@@ -39,6 +39,11 @@ class escape_sequences:
 def clear_screen() -> None:
     system('cls' if _os_name == 'nt' else 'clear')
 
+def close_game_on_space() -> None:
+    while ' ' != getch(): pass
+    GameController.close_game = True
+    sys.exit()
+
 dotenv.load_dotenv()
 HOST: str | None = getenv('IP')
 PORT: int = 1717
@@ -257,9 +262,17 @@ try:
             while GameController.receive_public_entities():
                 GameController.refresh_screen()
 
-except (ConnectionRefusedError, TimeoutError, ConnectionResetError):
+except (ConnectionRefusedError, TimeoutError, ConnectionResetError): # the error occurs while trying to establish the connection
     clear_screen()
-    print(("Your opponent has disconnected, unable to continue." if GameController.second_player_joined else "Server is offline, unable to connect.") + " Press spacebar to exit.")
-    GameController.close_game = True
-    while ' ' != getch(): pass
-    sys.exit()
+    print("Server is offline, unable to connect. Press spacebar to exit.")
+    close_game_on_space()
+
+except (BrokenPipeError, ConnectionError): # the error occurs while trying to send or read data from the server
+    clear_screen()
+    print("Server has disconnected. Press spacebar to exit.")
+    close_game_on_space()
+    
+except TerminationRequest: # received a termination request from the server
+    clear_screen()
+    print("Your opponent has disconnected, unable to continue. Press spacebar to exit.")
+    close_game_on_space()

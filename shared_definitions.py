@@ -337,16 +337,22 @@ SOCKET_CONNECTION_ESTABLISHED: bytes = b"CONNECTION ESTABLISHED"
 SOCKET_LOBBY_FULL: bytes = b"LOBBY FULL"
 SOCKET_SHARED_ENTITIES_UPDATE: bytes = b"SHARED ENTITIES UPDATE"
 SOCKET_YOUR_TURN: bytes = b"YOUR TURN"
+SOCKET_TERMINATION_REQUEST = b"TERMINATE"
+
+class TerminationRequest(Exception):
+    pass
 
 def recvall(conn: socket.socket) -> bytes:
     data: bytes = b''
     while SOCKET_END_MSG not in data:
-        try:
-            more: bytes = conn.recv(1)
-        except ConnectionResetError:
-            raise
+        more: bytes = conn.recv(1)
+        if not more:
+            raise ConnectionError
         data += more
-    return data[:-5]
+    stripped_data = data[:-5]
+    if stripped_data == SOCKET_TERMINATION_REQUEST:
+        raise TerminationRequest
+    return stripped_data
 
 def sendall_with_end(s: socket.socket, message: bytes) -> None:
     s.sendall(message + SOCKET_END_MSG)
