@@ -2,18 +2,17 @@ import pickle
 import socket
 import threading
 import re
-from enum import Enum, auto
 from typing import Dict, Tuple, List, Type, Any, Callable, overload
 from _collections_abc import Iterable
 from collections import namedtuple
 from sortedcontainers import SortedList
 
-GAME_FIELD_WIDTH: int = 81
-GAME_FIELD_HEIGHT: int = 21  
+GAME_FIELD_WIDTH: int = 81 # starts from 1
+GAME_FIELD_HEIGHT: int = 21 # starts from 1
 MIN_X: int = 0
 MIN_Y: int = 0
-MAX_X: int = GAME_FIELD_WIDTH - 1
-MAX_Y: int = GAME_FIELD_HEIGHT - 1
+MAX_X: int = MIN_X + (GAME_FIELD_WIDTH - 1) # starts from 0
+MAX_Y: int = MIN_Y + (GAME_FIELD_HEIGHT - 1) # starts from 0
 
 class colors:
     NONE: None = None
@@ -44,9 +43,18 @@ class face_values:
     NUM9: str = "9"
 PHARAOH: str = "↰"
 SUPER_BUILDING_PREFIX: str = "SUP"
+
 CURSOR_UP: str = "▲"
 CURSOR_DOWN: str = "▼"
+CURSOR_RIGHT: str = "▸"
+CURSOR_LEFT: str = "◂"
 
+UPPER_FIELD_BORDER: str = ("╭" + "─" * (GAME_FIELD_WIDTH - 2) + "╮")
+LOWER_FIELD_BORDER: str = ("╰" + "─" * (GAME_FIELD_WIDTH - 2) + "╯")
+LATERAL_FIELD_BORDER_CHARACTER: str = "│"
+PLAYER_SIDE_BORDER: str = ("-" * (GAME_FIELD_WIDTH - 2))
+
+PLAYER_COLORS: List[str] = [colors.NONE, colors.BLUE, colors.YELLOW] # PLAYER_COLORS[0] is colors.NONE so that each player's corresponding color is at the index player_num, not player_num - 1
 MAIN_COLORS: List[str] = [colors.GREEN, colors.BLUE, colors.YELLOW, colors.RED]
 SUPER_COLORS: List[str] = [colors.RAINBOW]
 WARRIOR_FACE_VALUES: List[str] = [face_values.NUM1, face_values.NUM2, face_values.NUM3, 
@@ -54,7 +62,7 @@ WARRIOR_FACE_VALUES: List[str] = [face_values.NUM1, face_values.NUM2, face_value
                                   face_values.NUM7, face_values.NUM8, face_values.NUM9, face_values.PLUS_2]
 BANDAGE_FACE_VALUES: List[str] = [face_values.FACE_VALUE_BANDAGE, face_values.LEVEL_BANDAGE, face_values.COMBINED_BANDAGE]
 BUILDING_FACE_VALUES: List[str] = [face_values.HOSPITAL, face_values.BARRACKS]
-SUPER_BUILDING_FACE_VALUES: List[str] = [(SUPER_BUILDING_PREFIX + face_value) for face_value in BUILDING_FACE_VALUES]
+SUPER_BUILDING_FACE_VALUES: List[str] = [SUPER_BUILDING_PREFIX + face_values.BARRACKS]
 
 Coordinates = namedtuple("Coordinates", ["x", "y"])
 
@@ -67,15 +75,20 @@ def index_by_identity(iterable: Iterable, obj: Any) -> int | None:
             return i
     return None
 
+class classproperty:
+    def __init__(self, fget):
+        self.fget = fget
+    def __get__(self, instance, owner):
+        return self.fget(owner)
+
 class Entity:
-    def __init__(self, content: str, color: str = colors.GRAY, display_priority: int = 0, coords: Coordinates = None, selectable: bool = False, public: bool = False) -> None:
+    def __init__(self, content: str, color: str = colors.GRAY, coords: Coordinates = None, selectable: bool = False, public: bool = False) -> None:
         if not hasattr(self, 'content'):
             self.content: str = content
         if not hasattr(self, 'color'):
             self.color: str = color
         self.selectable = selectable
         self.coords = Coordinates(coords[0], coords[1]) if coords else None # an Entity with no coords will not be displayed unless it is a part of a larger structure, which will display it
-        self.display_priority = display_priority # higher value means this Entity is drawn above others at the same position. negative number to hide the Entity from screen
         self.public = public
 
     def __repr__(self) -> str:
@@ -94,9 +107,10 @@ class Entity:
         self.coords = new_coords
 
 class Cursor(Entity):
-    def __init__(self, scope: SortedList[Entity] = []) -> None:
+    def __init__(self, shift_to_free_space_getter: Callable[[Entity], Tuple[int, int]], scope: SortedList[Entity] = []) -> None:
         self.selected = None
         self.__scope: SortedList[Entity] = scope
+        self.get_shift_to_free_space = shift_to_free_space_getter
         super().__init__(content=CURSOR_UP, color=colors.WHITE, public=False)
 
     @property
@@ -128,12 +142,17 @@ class Cursor(Entity):
         self.selected = self.selectable_scope[index_in_scope]
         self.__scope.discard(self)
 
-        if (self.selected.coords.y == MAX_Y - 1):
-            self.coords = Coordinates(self.selected.coords.x, self.selected.coords.y - 1)
-            self.content = CURSOR_DOWN
-        else:
-            self.coords = Coordinates(self.selected.coords.x, self.selected.coords.y + 1)
-            self.content = CURSOR_UP
+        shift = self.get_shift_to_free_space(self.selected)
+
+        icons = {
+            (0,  1): CURSOR_UP,
+            (0, -1): CURSOR_DOWN,
+            (-1,  0): CURSOR_RIGHT,
+            (len(self.selected.content),  1): CURSOR_LEFT
+        }
+        
+        self.coords = Coordinates(self.selected.coords.x + shift[0], self.selected.coords.y + shift[1])
+        self.content = icons[shift]
             
         self.__scope.add(self)
     
@@ -250,6 +269,7 @@ class BuildingCard(Card):
     TYPE_NAME: str = "Buildings"
 
     def __init__(self, building_type: str, level: str = colors.GREEN, coords: Tuple[int, int] = None, public: bool = True) -> None:
+        #TODO: fix docstring
         try:
             state = next(state for state in type(self).STATES if state.level == level and state.face_value == building_type)
         except StopIteration:
@@ -261,13 +281,13 @@ class WarriorCard(Card):
     STATES: List[CardState] = [CardState(level = level, face_value = face_value, pos_in_level = WARRIOR_FACE_VALUES.index(face_value)) for level in MAIN_COLORS for face_value in WARRIOR_FACE_VALUES]
     TYPE_NAME: str = "Warriors"
     def __init__(self, coords: Tuple[int, int] = None, power: int = 0, public: bool = False) -> None:
+        #TODO: fix docstring
         super().__init__(state_index = power, coords = coords, public = public)
 
 class GuardCard(WarriorCard):
     TYPE_NAME: str = "Guards"
     def __init__(self, coords: Tuple[int, int] = None, power: int = 0, public: bool = True) -> None:
         super().__init__(power = power, coords = coords, public = public)
-
 
 class CardList(Entity):
     def __init__(self, coords: Tuple[int, int], card_type: Type[Card], cards: List[Card] | None = None, selectable: bool = True, public: bool = True) -> None:
