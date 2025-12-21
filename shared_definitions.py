@@ -46,8 +46,8 @@ SUPER_BUILDING_PREFIX: str = "SUP"
 
 CURSOR_UP: str = "▲"
 CURSOR_DOWN: str = "▼"
-CURSOR_RIGHT: str = "▸"
-CURSOR_LEFT: str = "◂"
+CURSOR_RIGHT: str = "▶"
+CURSOR_LEFT: str = "◀"
 
 UPPER_FIELD_BORDER: str = ("╭" + "─" * (GAME_FIELD_WIDTH - 2) + "╮")
 LOWER_FIELD_BORDER: str = ("╰" + "─" * (GAME_FIELD_WIDTH - 2) + "╯")
@@ -145,10 +145,10 @@ class Cursor(Entity):
         shift = self.get_shift_to_free_space(self.selected)
 
         icons = {
-            (0,  1): CURSOR_UP,
-            (0, -1): CURSOR_DOWN,
             (-1,  0): CURSOR_RIGHT,
-            (len(self.selected.content),  1): CURSOR_LEFT
+            (len(self.selected.content),  0): CURSOR_LEFT,
+            (0,  1): CURSOR_UP,
+            (0, -1): CURSOR_DOWN
         }
         
         self.coords = Coordinates(self.selected.coords.x + shift[0], self.selected.coords.y + shift[1])
@@ -192,15 +192,15 @@ class Card(Entity):
         cls.LAST_STATE_INDEX = cls.COUNT - 1
 
     @overload
-    def __init__(self, state_index: int, coords: Tuple[int, int] = None, selectable: bool = True, public: bool = False) -> None: ...
+    def __init__(self, state_index: int, coords: Coordinates = None, selectable: bool = True, public: bool = False) -> None: ...
     @overload
-    def __init__(self, state: CardState, coords: Tuple[int, int] = None, selectable: bool = True, public: bool = False) -> None: ...
+    def __init__(self, state: CardState, coords: Coordinates = None, selectable: bool = True, public: bool = False) -> None: ...
 
     def __init__( # provide either state or state index, but not both. if card coordinates are None, it should be a part of a CardList
         self, 
         state: CardState = None, 
         state_index: int = None, 
-        coords: Tuple[int, int] = None,
+        coords: Coordinates = None,
         selectable: bool = True, 
         public: bool = False
     ) -> None:
@@ -268,7 +268,7 @@ class BuildingCard(Card):
     SUPPORTS_VALUE_UPGRADES = False
     TYPE_NAME: str = "Buildings"
 
-    def __init__(self, building_type: str, level: str = colors.GREEN, coords: Tuple[int, int] = None, public: bool = True) -> None:
+    def __init__(self, building_type: str, level: str = colors.GREEN, coords: Coordinates = None, public: bool = True) -> None:
         #TODO: fix docstring
         try:
             state = next(state for state in type(self).STATES if state.level == level and state.face_value == building_type)
@@ -280,17 +280,17 @@ class BuildingCard(Card):
 class WarriorCard(Card):
     STATES: List[CardState] = [CardState(level = level, face_value = face_value, pos_in_level = WARRIOR_FACE_VALUES.index(face_value)) for level in MAIN_COLORS for face_value in WARRIOR_FACE_VALUES]
     TYPE_NAME: str = "Warriors"
-    def __init__(self, coords: Tuple[int, int] = None, power: int = 0, public: bool = False) -> None:
+    def __init__(self, coords: Coordinates = None, power: int = 0, public: bool = False) -> None:
         #TODO: fix docstring
         super().__init__(state_index = power, coords = coords, public = public)
 
 class GuardCard(WarriorCard):
     TYPE_NAME: str = "Guards"
-    def __init__(self, coords: Tuple[int, int] = None, power: int = 0, public: bool = True) -> None:
+    def __init__(self, coords: Coordinates = None, power: int = 0, public: bool = True) -> None:
         super().__init__(power = power, coords = coords, public = public)
 
 class CardList(Entity):
-    def __init__(self, coords: Tuple[int, int], card_type: Type[Card], cards: List[Card] | None = None, selectable: bool = True, public: bool = True) -> None:
+    def __init__(self, coords: Coordinates, card_type: Type[Card], cards: List[Card] | None = None, selectable: bool = True, public: bool = True) -> None:
         self.card_type: Type[Card] = card_type
         self.__cards: List[Card] = cards if cards is not None else []
         super().__init__(content = self.content, coords = coords, color = colors.NONE, selectable = selectable, public = public)

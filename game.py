@@ -111,7 +111,7 @@ class GameController:
         y: int = 0
         for entity in cls.all_entities:
             x, y = cls.display_entity(entity_to_display = entity, start_x = x, start_y = y)
-            if isinstance(entity, Iterable):
+            if isinstance(entity, Iterable): # TODO: does not work with new cursor logic, the cursor is drawn only after all other elements of the cardlist
                 for e in entity:
                     x, y = cls.display_entity(entity_to_display = e, start_x = x, start_y = y)
         print("") # flush the buffer while also moving the cursor to the next line(to avoid distracting players)
@@ -127,14 +127,15 @@ class GameController:
     @classmethod
     def get_shift_to_free_space(cls, entity: Entity) -> Tuple[int, int]:
         shifts = (
-            (0, 1),
-            (0, -1),
             (-1, 0),
-            (len(entity.content), 0)
+            (len(entity.content), 0),
+            (0, 1),
+            (0, -1)
         )
 
         for shift_x, shift_y in shifts:
-            index_of_the_shift = cls.all_entities.bisect_left(Entity("", coords = Coordinates(entity.coords.x + shift_x, entity.coords.y + shift_y)))
+            dummy_entity = Entity("", coords = Coordinates(entity.coords.x + shift_x, entity.coords.y + shift_y))
+            index_of_the_shift = cls.all_entities.bisect_right(dummy_entity)
             closest_left: Entity = cls.all_entities[index_of_the_shift - 1] if index_of_the_shift > 0 else None
             if closest_left.coords.x + len(closest_left.content) <= (entity.coords.x + shift_x):
                 return (shift_x, shift_y)
@@ -286,6 +287,12 @@ try:
     ## TESTING
     GameController.main_bandage_list.append(BandageCard(CardState(colors.GREEN, face_values.FACE_VALUE_BANDAGE, pos_in_level=1), public = True))
     GameController.main_warrior_list.append(WarriorCard(power = 0, public = True))
+
+    # GameController.my_entities.add(WarriorCard(power = 0, public = True, coords = Coordinates(17, 17)))
+    # GameController.my_entities.add(WarriorCard(power = 1, public = True, coords = Coordinates(17, 18)))
+    # GameController.my_entities.add(WarriorCard(power = 2, public = True, coords = Coordinates(17, 16)))
+    # GameController.my_entities.add(WarriorCard(power = 3, public = True, coords = Coordinates(16, 17)))
+    # GameController.my_entities.add(WarriorCard(power = 4, public = True, coords = Coordinates(18, 17)))
     ##
 
     GameController.refresh_screen()
