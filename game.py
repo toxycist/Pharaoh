@@ -73,7 +73,7 @@ class GameController:
     main_warrior_list: CardList = CardList(card_type = WarriorCard, coords = MAIN_WARRIOR_LIST_COORDINATES)
     main_bandage_list: CardList = CardList(card_type = BandageCard, coords = MAIN_BANDAGE_LIST_COORDINATES)
     main_building_list: CardList = CardList(card_type = BuildingCard, coords = MAIN_BUILDING_LIST_COORDINATES)
-    cursor = None | Cursor # cursor is set outside of class body, because it needs a callback to a class method get_shift_to_free_space
+    cursor = Cursor # cursor is set outside of class body, because it needs a callback to a class method get_shift_to_free_space
     guard_list: List[GuardCard] = [GuardCard(coords = GUARD_COORDINATES_LIST[0]), GuardCard(coords = GUARD_COORDINATES_LIST[1])]
     footer: SortedList[Entity] = SortedList(key = lambda e: (e.coords.y, e.coords.x))
     second_player_joined: bool = False
@@ -107,13 +107,16 @@ class GameController:
 
     @classmethod
     def display_game_field(cls) -> None:
+        skip = False
+
         x: int = 0
         y: int = 0
         for entity in cls.all_entities:
             x, y = cls.display_entity(entity_to_display = entity, start_x = x, start_y = y)
-            if isinstance(entity, Iterable): # TODO: does not work with new cursor logic, the cursor is drawn only after all other elements of the cardlist
+            if isinstance(entity, Iterable):
                 for e in entity:
                     x, y = cls.display_entity(entity_to_display = e, start_x = x, start_y = y)
+
         print("") # flush the buffer while also moving the cursor to the next line(to avoid distracting players)
 
     @classmethod
@@ -127,10 +130,10 @@ class GameController:
     @classmethod
     def get_shift_to_free_space(cls, entity: Entity) -> Tuple[int, int]:
         shifts = (
-            (-1, 0),
-            (len(entity.content), 0),
             (0, 1),
-            (0, -1)
+            (0, -1),
+            (-1, 0),
+            (len(entity.content), 0)
         )
 
         for shift_x, shift_y in shifts:

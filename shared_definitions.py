@@ -145,10 +145,10 @@ class Cursor(Entity):
         shift = self.get_shift_to_free_space(self.selected)
 
         icons = {
-            (-1,  0): CURSOR_RIGHT,
-            (len(self.selected.content),  0): CURSOR_LEFT,
             (0,  1): CURSOR_UP,
-            (0, -1): CURSOR_DOWN
+            (0, -1): CURSOR_DOWN,
+            (-1,  0): CURSOR_RIGHT,
+            (len(self.selected.content),  0): CURSOR_LEFT
         }
         
         self.coords = Coordinates(self.selected.coords.x + shift[0], self.selected.coords.y + shift[1])
