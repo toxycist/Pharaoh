@@ -61,7 +61,12 @@ GUARD_COORDINATES_LIST: List[Coordinates] = [Coordinates(MIN_X + 7, MAX_Y - 3), 
 MAIN_WARRIOR_LIST_COORDINATES = Coordinates(MIN_X + 23, MAX_Y - 5)
 MAIN_BANDAGE_LIST_COORDINATES = Coordinates(MIN_X + 23, MAX_Y - 3)
 MAIN_BUILDING_LIST_COORDINATES = Coordinates(MIN_X + 23, MAX_Y - 1)
-FOOTER_START_COORDINATES = Coordinates(MIN_X, MAX_Y + 1)
+ACTION_MENU_START_COORDINATES = Coordinates(MIN_X, MAX_Y + 1)
+
+class ActionEntry(Entity):
+    def __init__(self, content: str, action: Callable, coords: Coordinates, help_string: str = "", color = colors.NONE, selectable = True, public = False):
+        super().__init__(content, color, coords, selectable, public, help_string)
+        self.action = action
 
 class GameController:
     close_game: bool = False
@@ -74,8 +79,10 @@ class GameController:
     main_bandage_list: CardList = CardList(card_type = BandageCard, coords = MAIN_BANDAGE_LIST_COORDINATES)
     main_building_list: CardList = CardList(card_type = BuildingCard, coords = MAIN_BUILDING_LIST_COORDINATES)
     cursor = Cursor # cursor is set outside of class body, because it needs a callback to a class method get_shift_to_free_space
+    current_action_menu: SortedList[Entity] = SortedList(key = lambda e: (e.coords.y, e.coords.x))
     guard_list: List[GuardCard] = [GuardCard(coords = GUARD_COORDINATES_LIST[0]), GuardCard(coords = GUARD_COORDINATES_LIST[1])]
     footer: SortedList[Entity] = SortedList(key = lambda e: (e.coords.y, e.coords.x))
+    frozen_footer: bool = False
     second_player_joined: bool = False
 
     controls: Dict[str, Callable] = {}
@@ -85,7 +92,7 @@ class GameController:
 
     @classproperty
     def all_entities(cls) -> SortedList[Entity]:
-        return SortedList(cls.my_entities + cls.received_entities + cls.footer, key = lambda e: (e.coords.y, e.coords.x))
+        return SortedList(cls.my_entities + cls.received_entities + cls.current_action_menu + cls.footer, key = lambda e: (e.coords.y, e.coords.x))
 
     @classmethod
     def display_entity(cls, entity_to_display: Entity, start_x: int, start_y: int) -> Tuple[int, int]:
@@ -121,11 +128,18 @@ class GameController:
 
     @classmethod
     def set_footer(cls, entity: Entity | List[Entity]) -> None:
+        if cls.frozen_footer:
+            return
+
         cls.footer.clear()
         if isinstance(entity, Iterable):
             cls.footer.update(entity)
         else:
             cls.footer.add(entity)
+    
+    @classmethod
+    def set_footer_to_current_help_string(cls) -> None:
+        cls.set_footer(Entity(cls.cursor.selected.help_string, colors.NONE, coords = cls.get_footer_start_coordinates()))
     
     @classmethod
     def get_shift_to_free_space(cls, entity: Entity) -> Tuple[int, int]:
@@ -179,6 +193,85 @@ class GameController:
     def end_turn(cls) -> None:
         sendall_with_end(s, SOCKET_YOUR_TURN)
         cls.my_turn = False
+    
+    @classmethod
+    def open_action_menu(cls, entity: Entity) -> bool: # True if the menu was opened, False otherwise
+        menu: List[Entity] = []
+
+        if isinstance(entity, BandageCard) and entity.content == face_values.FACE_VALUE_BANDAGE:
+            menu.append(ActionEntry("Upgrade the value of a certain card", 
+                                    coords = (ACTION_MENU_START_COORDINATES.x + 2, ACTION_MENU_START_COORDINATES.y + 1 + len(menu)),
+                                    action = lambda: (
+                                        cls.cursor.selected.upgrade_level(), 
+                                        cls.refresh_screen(), 
+                                        cls.send_public_entities(), 
+                                        cls.end_turn()),
+                                    help_string = "1"))
+            menu.append(ActionEntry("Upgrade the value of a certain card", 
+                                    coords = (ACTION_MENU_START_COORDINATES.x + 2, ACTION_MENU_START_COORDINATES.y + 1 + len(menu)),
+                                    action = lambda: (
+                                        cls.cursor.selected.upgrade_level(), 
+                                        cls.refresh_screen(), 
+                                        cls.send_public_entities(), 
+                                        cls.end_turn()),
+                                    help_string = "2"))
+            menu.append(ActionEntry("Upgrade the value of a certain card", 
+                                    coords = (ACTION_MENU_START_COORDINATES.x + 2, ACTION_MENU_START_COORDINATES.y + 1 + len(menu)),
+                                    action = lambda: (
+                                        cls.cursor.selected.upgrade_level(), 
+                                        cls.refresh_screen(), 
+                                        cls.send_public_entities(), 
+                                        cls.end_turn()),
+                                    help_string = "3"))
+        else:
+            cls.set_footer(Entity("No action can be performed by this entity", colors.NONE, coords = ACTION_MENU_START_COORDINATES))
+            return False
+
+        number_of_entries = len(menu)
+
+        menu += [Entity(content = UPPER_FIELD_BORDER, color = GameController.player_color, coords = ACTION_MENU_START_COORDINATES), 
+                    Entity(content = LOWER_FIELD_BORDER, color = GameController.player_color, coords = (ACTION_MENU_START_COORDINATES.x, ACTION_MENU_START_COORDINATES.y + 1 + number_of_entries))]
+
+        for y in range(number_of_entries):
+            menu += [Entity(content = LATERAL_FIELD_BORDER_CHARACTER, color = GameController.player_color, coords = (ACTION_MENU_START_COORDINATES.x, ACTION_MENU_START_COORDINATES.y + y + 1)),
+                        Entity(content = LATERAL_FIELD_BORDER_CHARACTER, color = GameController.player_color, coords = (ACTION_MENU_START_COORDINATES.x + (GAME_FIELD_WIDTH - 1), ACTION_MENU_START_COORDINATES.y + y + 1))]
+
+        cls.current_action_menu.update(menu)
+        cls.update_footer_location()
+        return True
+    
+    @classmethod
+    def close_action_menu(cls) -> None:
+        cls.current_action_menu.clear()
+        cls.update_footer_location()
+    
+    @classmethod
+    def get_footer_start_coordinates(cls) -> Coordinates:
+        if cls.current_action_menu:
+            return Coordinates(MIN_X, cls.current_action_menu[-1].coords.y + 1)
+        else:
+            return ACTION_MENU_START_COORDINATES
+    
+    @classmethod
+    def update_footer_location(cls) -> None:
+        current_footer_coords = cls.footer[0].coords
+        new_footer_coords = cls.get_footer_start_coordinates()
+        for e in cls.footer:
+            e.set_coords(Coordinates(e.coords.x, e.coords.y + (new_footer_coords.y - current_footer_coords.y)))
+
+    @classmethod
+    def cursor_select_previous_entity(cls) -> None:
+        cls.cursor.select_previous()
+        if not cls.frozen_footer:
+            cls.set_footer_to_current_help_string()
+        cls.refresh_screen()
+
+    @classmethod
+    def cursor_select_next_entity(cls) -> None:
+        cls.cursor.select_next()
+        if not cls.frozen_footer:
+            cls.set_footer_to_current_help_string()
+        cls.refresh_screen()
 
 GameController.cursor = Cursor(GameController.get_shift_to_free_space, scope = GameController.my_entities)
 
@@ -194,49 +287,22 @@ def draw_a_card(card_type: type[Entity], to_cardlist: CardList, public: bool) ->
     to_cardlist.append(card_type(power = picked_card_power, public = True))
 #####
 
-class ActionEntry(Entity):
-    def __init__(self, content: str, action: Callable, coords: Coordinates, color = colors.NONE, selectable = True, public = False):
-        super().__init__(content, color, coords, selectable, public)
-        self.action = action
-
-def create_action_menu(entity: Entity) -> List[Entity]: # warning: the returned list is not sorted
-    menu: List[Entity] = []
-
-    if isinstance(entity, BandageCard) and entity.content == face_values.FACE_VALUE_BANDAGE:
-        menu.append(ActionEntry("Upgrade the value of a certain card", 
-                                coords = (FOOTER_START_COORDINATES.x + 2, FOOTER_START_COORDINATES.y + 1 + len(menu)),
-                                action = lambda: (
-                                    GameController.cursor.selected.upgrade_level(), 
-                                    GameController.refresh_screen(), 
-                                    GameController.send_public_entities(), 
-                                    GameController.end_turn())))
-        menu.append(ActionEntry("Upgrade the value of a certain card", 
-                                coords = (FOOTER_START_COORDINATES.x + 2, FOOTER_START_COORDINATES.y + 1 + len(menu)),
-                                action = lambda: (
-                                    GameController.cursor.selected.upgrade_level(), 
-                                    GameController.refresh_screen(), 
-                                    GameController.send_public_entities(), 
-                                    GameController.end_turn())))
-        menu.append(ActionEntry("Upgrade the value of a certain card", 
-                                coords = (FOOTER_START_COORDINATES.x + 2, FOOTER_START_COORDINATES.y + 1 + len(menu)),
-                                action = lambda: (
-                                    GameController.cursor.selected.upgrade_level(), 
-                                    GameController.refresh_screen(), 
-                                    GameController.send_public_entities(), 
-                                    GameController.end_turn())))
+def on_spacebar() -> None:
+    if isinstance(GameController.cursor.selected, ActionEntry):
+        GameController.cursor.selected.action()
     else:
-        return [Entity("No action can be performed by this entity.", colors.NONE, coords = FOOTER_START_COORDINATES)]
-    
-    number_of_entries = len(menu)
+        menu_was_opened = GameController.open_action_menu(GameController.cursor.selected)
+        if menu_was_opened:
+            GameController.cursor.set_scope(GameController.current_action_menu)
+            GameController.set_footer_to_current_help_string()
+        GameController.refresh_screen()
 
-    menu += [Entity(content = UPPER_FIELD_BORDER, color = GameController.player_color, coords = FOOTER_START_COORDINATES), 
-             Entity(content = LOWER_FIELD_BORDER, color = GameController.player_color, coords = (FOOTER_START_COORDINATES.x, FOOTER_START_COORDINATES.y + 1 + number_of_entries))]
-    
-    for y in range(number_of_entries):
-        menu += [Entity(content = LATERAL_FIELD_BORDER_CHARACTER, color = GameController.player_color, coords = (FOOTER_START_COORDINATES.x, FOOTER_START_COORDINATES.y + y + 1)),
-                 Entity(content = LATERAL_FIELD_BORDER_CHARACTER, color = GameController.player_color, coords = (FOOTER_START_COORDINATES.x + (GAME_FIELD_WIDTH - 1), FOOTER_START_COORDINATES.y + y + 1))]
-
-    return menu
+def on_q() -> None:
+    if GameController.cursor.get_scope() == GameController.current_action_menu:
+        GameController.cursor.set_scope(GameController.my_entities)
+        GameController.close_action_menu()
+        GameController.set_footer_to_current_help_string()
+        GameController.refresh_screen()
 
 GameController.my_entities.update([Entity(content = UPPER_FIELD_BORDER, coords = (MIN_X, MIN_Y)),
                                    Entity(content = LOWER_FIELD_BORDER, coords = (MIN_X, MAX_Y))])
@@ -244,7 +310,7 @@ for y in range(MIN_Y + 1, MAX_Y):
     GameController.my_entities.update([Entity(content = LATERAL_FIELD_BORDER_CHARACTER, coords = (MIN_X, y)),
                                        Entity(content = LATERAL_FIELD_BORDER_CHARACTER, coords = (MAX_X, y))])
 
-GameController.set_footer(Entity("Press spacebar when you are ready.", colors.NONE, coords = FOOTER_START_COORDINATES))
+GameController.set_footer(Entity("Press spacebar when you are ready.", colors.NONE, coords = GameController.get_footer_start_coordinates()))
 GameController.refresh_screen()
 while ' ' != getch(): pass
 clear_screen()
@@ -266,7 +332,7 @@ try:
 
     GameController.player_num = int.from_bytes(data)
     GameController.player_color = PLAYER_COLORS[GameController.player_num]
-    GameController.set_footer(Entity(f"You are player {GameController.player_num}.", colors.NONE, coords = FOOTER_START_COORDINATES))
+    GameController.set_footer(Entity(f"You are player {GameController.player_num}.", colors.NONE, coords = GameController.get_footer_start_coordinates()))
 
     GameController.my_entities.add(Entity(content = PLAYER_SIDE_BORDER, 
                                           coords = (MIN_X + 1, MAX_Y - (PLAYER_SIDE_HEIGHT + 2)), 
@@ -309,30 +375,12 @@ try:
         escape_sequences.CTRL_C: lambda: (
             (_ for _ in []).throw(KeyboardInterrupt) # a small hack to raise exceptions from lambda functions
             ),
-        escape_sequences.ARROW_UP: lambda: (
-            GameController.cursor.select_previous(), 
-            GameController.refresh_screen()
-            ),
-        escape_sequences.ARROW_LEFT: lambda: (
-            GameController.cursor.select_previous(), 
-            GameController.refresh_screen()
-            ),
-        escape_sequences.ARROW_DOWN: lambda: (
-            GameController.cursor.select_next(), 
-            GameController.refresh_screen()
-            ),
-        escape_sequences.ARROW_RIGHT: lambda: (
-            GameController.cursor.select_next(), 
-            GameController.refresh_screen()
-            ),
-        ' ': lambda: (
-            GameController.cursor.selected.action()
-            if isinstance(GameController.cursor.selected, ActionEntry)
-            else (
-                GameController.set_footer(create_action_menu(GameController.cursor.selected)),
-                GameController.refresh_screen()
-                )
-            ),
+        escape_sequences.ARROW_UP: GameController.cursor_select_previous_entity,
+        escape_sequences.ARROW_LEFT: GameController.cursor_select_previous_entity,
+        escape_sequences.ARROW_DOWN: GameController.cursor_select_next_entity,
+        escape_sequences.ARROW_RIGHT: GameController.cursor_select_next_entity,
+        ' ': on_spacebar,
+        'q': on_q,
         '1': lambda: (
             GameController.main_warrior_list.append(WarriorCard(power = 0, public = True)), 
             GameController.refresh_screen(), 

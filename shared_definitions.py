@@ -82,7 +82,7 @@ class classproperty:
         return self.fget(owner)
 
 class Entity:
-    def __init__(self, content: str, color: str = colors.GRAY, coords: Coordinates = None, selectable: bool = False, public: bool = False) -> None:
+    def __init__(self, content: str, color: str = colors.GRAY, coords: Coordinates = None, selectable: bool = False, public: bool = False, help_string: str = "") -> None:
         if not hasattr(self, 'content'):
             self.content: str = content
         if not hasattr(self, 'color'):
@@ -90,6 +90,7 @@ class Entity:
         self.selectable = selectable
         self.coords = Coordinates(coords[0], coords[1]) if coords else None # an Entity with no coords will not be displayed unless it is a part of a larger structure, which will display it
         self.public = public
+        self.help_string = help_string
 
     def __repr__(self) -> str:
         return_str: str = ''
@@ -129,6 +130,14 @@ class Cursor(Entity):
     @property
     def index_in_scope(self) -> int | None:
         return index_by_identity(iterable = self.selectable_scope, obj = self.selected)
+    
+    def set_scope(self, new_scope: SortedList[Entity]) -> None:
+        self.hide()
+        self.__scope = new_scope
+        self.show()
+    
+    def get_scope(self) -> SortedList[Entity]:
+        return self.__scope
 
     def show(self) -> None:
         if len(self.selectable_scope) > 0 and self not in self.__scope:
@@ -143,14 +152,12 @@ class Cursor(Entity):
         self.__scope.discard(self)
 
         shift = self.get_shift_to_free_space(self.selected)
-
         icons = {
             (0,  1): CURSOR_UP,
             (0, -1): CURSOR_DOWN,
             (-1,  0): CURSOR_RIGHT,
             (len(self.selected.content),  0): CURSOR_LEFT
         }
-        
         self.coords = Coordinates(self.selected.coords.x + shift[0], self.selected.coords.y + shift[1])
         self.content = icons[shift]
             
