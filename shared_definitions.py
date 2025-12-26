@@ -108,10 +108,12 @@ class Entity:
         self.coords = new_coords
 
 class Cursor(Entity):
-    def __init__(self, shift_to_free_space_getter: Callable[[Entity], Tuple[int, int]], scope: SortedList[Entity] = []) -> None:
+    def __init__(self, shift_to_free_space_getter: Callable[[Entity], Tuple[int, int]], scope: SortedList[Entity], on_select: Callable = None) -> None:
         self.selected = None
         self.__scope: SortedList[Entity] = scope
+        self.scope_stack: List[SortedList[Entity]] = [self.__scope]
         self.get_shift_to_free_space = shift_to_free_space_getter
+        self.on_select = on_select
         super().__init__(content=CURSOR_UP, color=colors.WHITE, public=False)
 
     @property
@@ -131,10 +133,18 @@ class Cursor(Entity):
     def index_in_scope(self) -> int | None:
         return index_by_identity(iterable = self.selectable_scope, obj = self.selected)
     
-    def set_scope(self, new_scope: SortedList[Entity]) -> None:
+    def __set_scope(self, new_scope: SortedList[Entity]) -> None:
         self.hide()
         self.__scope = new_scope
         self.show()
+
+    def scope_backward(self) -> None:
+        self.scope_stack.pop()
+        self.__set_scope(self.scope_stack[-1])
+    
+    def scope_forward(self, new_scope: SortedList[Entity]) -> None:
+        self.__set_scope(new_scope)
+        self.scope_stack.append(self.__scope)
     
     def get_scope(self) -> SortedList[Entity]:
         return self.__scope
@@ -162,6 +172,9 @@ class Cursor(Entity):
         self.content = icons[shift]
             
         self.__scope.add(self)
+
+        if self.on_select:
+            self.on_select()
     
     def select_next(self) -> None:
         index_in_scope: int = index_by_identity(iterable = self.selectable_scope, obj = self.selected)

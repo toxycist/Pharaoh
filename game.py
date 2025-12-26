@@ -63,10 +63,47 @@ MAIN_BANDAGE_LIST_COORDINATES = Coordinates(MIN_X + 23, MAX_Y - 3)
 MAIN_BUILDING_LIST_COORDINATES = Coordinates(MIN_X + 23, MAX_Y - 1)
 ACTION_MENU_START_COORDINATES = Coordinates(MIN_X, MAX_Y + 1)
 
+DEFAULT_SCOPE_KEY = lambda e: (e.coords.y, e.coords.x)
+
+def flatten_iterable(iterable: Iterable):
+    result = []
+    for elem in iterable:
+        result.append(elem)
+        if isinstance(elem, Iterable):
+            result.extend(flatten_iterable(elem))
+    return result
+
+class Requirements:
+    def __init__(self, quantities: List[int], requirements: List[Callable[[Entity], bool]]):
+        """
+        :param quantities:
+            A list of integers. Each value specifies how many objects should be selected
+            using the corresponding criteria from `requirements`.
+
+        :type quantities:
+            List[int]
+
+        :param requirements:
+            A list of Callables defining selection criteria. 
+            Each Callable corresponds to the entry at the same index in `quantities`. 
+            Each Callable is applied to the entities and must return True if an entity satisfies the criteria. 
+            The results will be used to define the scope from which the number of entities specified at the same index in `quantities` will be selected.
+
+        :type requirements:
+            List[Callable[[Entity], bool]]
+        """
+
+        if len(quantities) != len(requirements):
+            raise ValueError("Parameters 'quantities' and 'requirements' must have the same length")
+
+        self.quantities: List[int] = quantities
+        self.requirements: List[Callable[[Entity], bool]] = requirements
+
 class ActionEntry(Entity):
-    def __init__(self, content: str, action: Callable, coords: Coordinates, help_string: str = "", color = colors.NONE, selectable = True, public = False):
+    def __init__(self, content: str, action: Callable, coords: Coordinates, help_string: str = "", entity_requirements: Requirements = None, color = colors.NONE, selectable = True, public = False):
         super().__init__(content, color, coords, selectable, public, help_string)
         self.action = action
+        self.entity_requirements = entity_requirements 
 
 class GameController:
     close_game: bool = False
@@ -74,15 +111,24 @@ class GameController:
     player_color: str = colors.NONE
     my_turn: bool = False
     my_entities: SortedList[Entity] = SortedList(key = lambda e: (e.coords.y, e.coords.x) if e.coords else (-1, -1)) # apparently fuckass SortedList uses its key even when checking for membership, so providing a value without coords just fucking crashes the program. this is why the check for e.coords is needed
-    received_entities: SortedList[Entity] = SortedList(key = lambda e: (e.coords.y, e.coords.x))
+    received_entities: SortedList[Entity] = SortedList(key = DEFAULT_SCOPE_KEY)
     main_warrior_list: CardList = CardList(card_type = WarriorCard, coords = MAIN_WARRIOR_LIST_COORDINATES)
     main_bandage_list: CardList = CardList(card_type = BandageCard, coords = MAIN_BANDAGE_LIST_COORDINATES)
     main_building_list: CardList = CardList(card_type = BuildingCard, coords = MAIN_BUILDING_LIST_COORDINATES)
-    cursor = Cursor # cursor is set outside of class body, because it needs a callback to a class method get_shift_to_free_space
-    current_action_menu: SortedList[Entity] = SortedList(key = lambda e: (e.coords.y, e.coords.x))
     guard_list: List[GuardCard] = [GuardCard(coords = GUARD_COORDINATES_LIST[0]), GuardCard(coords = GUARD_COORDINATES_LIST[1])]
-    footer: SortedList[Entity] = SortedList(key = lambda e: (e.coords.y, e.coords.x))
+    footer: SortedList[Entity] = SortedList(key = DEFAULT_SCOPE_KEY)
     frozen_footer: bool = False
+    cursor: Cursor = None # cursor is set outside of class body, because it needs a callback to a class method get_shift_to_free_space
+
+    selection_mode: bool = False
+    selection_mode_action: ActionEntry = None
+    selection_mode_quantities: List[int] = []
+    selection_mode_scopes: List[List[Entity]] = []
+    selection_mode_current_scope_index: int = 0
+    selection_mode_selected_entities: List[List[Entity]] = []
+
+    current_action_menu: SortedList[Entity] = SortedList(key = DEFAULT_SCOPE_KEY)
+    
     second_player_joined: bool = False
 
     controls: Dict[str, Callable] = {}
@@ -92,7 +138,29 @@ class GameController:
 
     @classproperty
     def all_entities(cls) -> SortedList[Entity]:
-        return SortedList(cls.my_entities + cls.received_entities + cls.current_action_menu + cls.footer, key = lambda e: (e.coords.y, e.coords.x))
+        return SortedList(cls.my_entities + cls.received_entities + cls.current_action_menu + cls.footer, key = DEFAULT_SCOPE_KEY)
+    
+    @classmethod
+    def enable_selection_mode(cls, action: Callable, quantities: List[int], requirements: List[Callable]) -> None:
+        cls.selection_mode = True
+        cls.selection_mode_action = action
+        cls.selection_mode_quantities = quantities.copy() # quantities is the only list here, that comes directly from the Requirements object in the ActionEntry, so we need to ensure it stays unchanged there
+        for check in requirements:
+            cls.selection_mode_scopes.append(SortedList([e for e in flatten_iterable(cls.my_entities) if check(e)], key = DEFAULT_SCOPE_KEY))
+        cls.cursor.scope_forward(cls.selection_mode_scopes[0])
+        cls.my_entities.add(cls.cursor) # make cursor visible, because displayed entities are taken from my_entities rather than from whatever subscope cursor is now in
+
+    @classmethod
+    def disable_selection_mode(cls) -> None:
+        cls.my_entities.discard(cls.cursor) # remove the second cursor from my_entities (refer to the comment in "enable_selection_mode")
+        cls.cursor.scope_backward()
+
+        cls.selection_mode = False
+        cls.selection_mode_action = None
+        cls.selection_mode_quantities.clear()
+        cls.selection_mode_scopes.clear()
+        cls.selection_mode_current_scope_index = 0
+        cls.selection_mode_selected_entities.clear()
 
     @classmethod
     def display_entity(cls, entity_to_display: Entity, start_x: int, start_y: int) -> Tuple[int, int]:
@@ -118,11 +186,8 @@ class GameController:
 
         x: int = 0
         y: int = 0
-        for entity in cls.all_entities:
+        for entity in flatten_iterable(cls.all_entities):
             x, y = cls.display_entity(entity_to_display = entity, start_x = x, start_y = y)
-            if isinstance(entity, Iterable):
-                for e in entity:
-                    x, y = cls.display_entity(entity_to_display = e, start_x = x, start_y = y)
 
         print("") # flush the buffer while also moving the cursor to the next line(to avoid distracting players)
 
@@ -139,7 +204,9 @@ class GameController:
     
     @classmethod
     def set_footer_to_current_help_string(cls) -> None:
-        cls.set_footer(Entity(cls.cursor.selected.help_string, colors.NONE, coords = cls.get_footer_start_coordinates()))
+        if not cls.frozen_footer:
+            cls.set_footer(Entity(cls.cursor.selected.help_string, colors.NONE, coords = cls.get_footer_start_coordinates()))
+        cls.refresh_screen()
     
     @classmethod
     def get_shift_to_free_space(cls, entity: Entity) -> Tuple[int, int]:
@@ -201,13 +268,22 @@ class GameController:
         if isinstance(entity, BandageCard) and entity.content == face_values.FACE_VALUE_BANDAGE:
             menu.append(ActionEntry("Upgrade the value of a certain card", 
                                     coords = (ACTION_MENU_START_COORDINATES.x + 2, ACTION_MENU_START_COORDINATES.y + 1 + len(menu)),
-                                    action = lambda: (
-                                        cls.cursor.selected.upgrade_level(), 
+                                    action = lambda list: (
+                                        list[0].upgrade_level(), # there will only be one item, as specified in entity_requirements
                                         cls.refresh_screen(), 
                                         cls.send_public_entities(), 
-                                        cls.end_turn()),
+                                        cls.end_turn()
+                                        ),
+                                    entity_requirements = Requirements(
+                                        quantities = [1],
+                                        requirements = [
+                                            lambda e: (
+                                                hasattr(type(e), "TYPE_NAME") and type(e).TYPE_NAME == "Warriors"
+                                            )
+                                        ]
+                                    ),
                                     help_string = "1"))
-            menu.append(ActionEntry("Upgrade the value of a certain card", 
+            menu.append(ActionEntry("2", 
                                     coords = (ACTION_MENU_START_COORDINATES.x + 2, ACTION_MENU_START_COORDINATES.y + 1 + len(menu)),
                                     action = lambda: (
                                         cls.cursor.selected.upgrade_level(), 
@@ -215,7 +291,7 @@ class GameController:
                                         cls.send_public_entities(), 
                                         cls.end_turn()),
                                     help_string = "2"))
-            menu.append(ActionEntry("Upgrade the value of a certain card", 
+            menu.append(ActionEntry("3", 
                                     coords = (ACTION_MENU_START_COORDINATES.x + 2, ACTION_MENU_START_COORDINATES.y + 1 + len(menu)),
                                     action = lambda: (
                                         cls.cursor.selected.upgrade_level(), 
@@ -244,6 +320,7 @@ class GameController:
     def close_action_menu(cls) -> None:
         cls.current_action_menu.clear()
         cls.update_footer_location()
+        cls.set_footer_to_current_help_string()
     
     @classmethod
     def get_footer_start_coordinates(cls) -> Coordinates:
@@ -259,21 +336,7 @@ class GameController:
         for e in cls.footer:
             e.set_coords(Coordinates(e.coords.x, e.coords.y + (new_footer_coords.y - current_footer_coords.y)))
 
-    @classmethod
-    def cursor_select_previous_entity(cls) -> None:
-        cls.cursor.select_previous()
-        if not cls.frozen_footer:
-            cls.set_footer_to_current_help_string()
-        cls.refresh_screen()
-
-    @classmethod
-    def cursor_select_next_entity(cls) -> None:
-        cls.cursor.select_next()
-        if not cls.frozen_footer:
-            cls.set_footer_to_current_help_string()
-        cls.refresh_screen()
-
-GameController.cursor = Cursor(GameController.get_shift_to_free_space, scope = GameController.my_entities)
+GameController.cursor = Cursor(GameController.get_shift_to_free_space, scope = GameController.my_entities, on_select = GameController.set_footer_to_current_help_string)
 
 ##### [DIFFICULT ZONE] PROBABILITIES ##### TODO: #1
 def triangular_number(n: int) -> int:
@@ -287,22 +350,57 @@ def draw_a_card(card_type: type[Entity], to_cardlist: CardList, public: bool) ->
     to_cardlist.append(card_type(power = picked_card_power, public = True))
 #####
 
-def on_spacebar() -> None:
-    if isinstance(GameController.cursor.selected, ActionEntry):
-        GameController.cursor.selected.action()
+def execute_action(action_entry: ActionEntry, *entity_lists: List[Entity]) -> None:
+    if entity_lists:
+        action_entry.action(*entity_lists)
     else:
-        menu_was_opened = GameController.open_action_menu(GameController.cursor.selected)
+        action_entry.action()
+
+def on_spacebar() -> None:
+    if GameController.selection_mode:
+
+        i = GameController.selection_mode_current_scope_index
+        selected_entities = GameController.selection_mode_selected_entities
+        quantities = GameController.selection_mode_quantities
+
+        if i >= len(selected_entities):
+            selected_entities.append([GameController.cursor.selected])
+        else:
+            selected_entities[-1].append(GameController.cursor.selected)
+
+        if len(selected_entities) == quantities[i]:
+            GameController.selection_mode_current_scope_index += 1
+            if GameController.selection_mode_current_scope_index >= len(GameController.selection_mode_scopes):
+                execute_action(GameController.selection_mode_action, *selected_entities)
+                GameController.disable_selection_mode()
+            else:
+                GameController.cursor.scope_backward()
+                GameController.cursor.scope_forward(GameController.selection_mode_scopes[i])
+            GameController.refresh_screen()
+
+    elif isinstance(GameController.cursor.selected, ActionEntry):
+        reqs = GameController.cursor.selected.entity_requirements
+        if reqs:
+            GameController.enable_selection_mode(action = GameController.cursor.selected, quantities = reqs.quantities, requirements = reqs.requirements)
+            GameController.refresh_screen()
+        else:
+            execute_action(GameController.cursor.selected)
+    else:
+        menu_was_opened = GameController.open_action_menu(GameController.cursor.selected) # returns False if no menu was opened
         if menu_was_opened:
-            GameController.cursor.set_scope(GameController.current_action_menu)
+            GameController.cursor.scope_forward(GameController.current_action_menu)
             GameController.set_footer_to_current_help_string()
         GameController.refresh_screen()
 
 def on_q() -> None:
-    if GameController.cursor.get_scope() == GameController.current_action_menu:
-        GameController.cursor.set_scope(GameController.my_entities)
-        GameController.close_action_menu()
+    try:
+        GameController.cursor.scope_backward()
+        if GameController.current_action_menu != [] and GameController.current_action_menu not in GameController.cursor.scope_stack:
+            GameController.close_action_menu()
         GameController.set_footer_to_current_help_string()
         GameController.refresh_screen()
+    except IndexError:
+        pass
 
 GameController.my_entities.update([Entity(content = UPPER_FIELD_BORDER, coords = (MIN_X, MIN_Y)),
                                    Entity(content = LOWER_FIELD_BORDER, coords = (MIN_X, MAX_Y))])
@@ -332,7 +430,7 @@ try:
 
     GameController.player_num = int.from_bytes(data)
     GameController.player_color = PLAYER_COLORS[GameController.player_num]
-    GameController.set_footer(Entity(f"You are player {GameController.player_num}.", colors.NONE, coords = GameController.get_footer_start_coordinates()))
+    GameController.set_footer(Entity(f"", colors.NONE, coords = GameController.get_footer_start_coordinates()))
 
     GameController.my_entities.add(Entity(content = PLAYER_SIDE_BORDER, 
                                           coords = (MIN_X + 1, MAX_Y - (PLAYER_SIDE_HEIGHT + 2)), 
@@ -375,10 +473,10 @@ try:
         escape_sequences.CTRL_C: lambda: (
             (_ for _ in []).throw(KeyboardInterrupt) # a small hack to raise exceptions from lambda functions
             ),
-        escape_sequences.ARROW_UP: GameController.cursor_select_previous_entity,
-        escape_sequences.ARROW_LEFT: GameController.cursor_select_previous_entity,
-        escape_sequences.ARROW_DOWN: GameController.cursor_select_next_entity,
-        escape_sequences.ARROW_RIGHT: GameController.cursor_select_next_entity,
+        escape_sequences.ARROW_UP: GameController.cursor.select_previous,
+        escape_sequences.ARROW_LEFT: GameController.cursor.select_previous,
+        escape_sequences.ARROW_DOWN: GameController.cursor.select_next,
+        escape_sequences.ARROW_RIGHT: GameController.cursor.select_next,
         ' ': on_spacebar,
         'q': on_q,
         '1': lambda: (
@@ -422,6 +520,12 @@ try:
                 else:
                     GameController.controls[key]()
         else:
+            while len(GameController.cursor.scope_stack) > 1: # move cursor back to top
+                GameController.cursor.scope_backward()
+            
+            if GameController.current_action_menu != []:
+                GameController.close_action_menu()
+
             GameController.cursor.hide()
             GameController.refresh_screen()
             while GameController.receive_public_entities():
