@@ -66,12 +66,22 @@ SUPER_BUILDING_FACE_VALUES: List[str] = [SUPER_BUILDING_PREFIX + face_values.BAR
 
 Coordinates = namedtuple("Coordinates", ["x", "y"])
 
+def flatten_iterable(iterable: Iterable):
+    result = []
+    for elem in iterable:
+        result.append(elem)
+        if isinstance(elem, Iterable):
+            if isinstance(elem, CardList):
+                elem.update_card_coordinates(0, len(elem))
+            result.extend(flatten_iterable(elem))
+    return result
+
 def remove_color_codes(s: str) -> str:
     return re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]').sub('', s)
 
 def index_by_identity(iterable: Iterable, obj: Any) -> int | None:
     for i, item in enumerate(iterable):
-        if item is obj:  # ← identity comparison
+        if item is obj:  # identity comparison
             return i
     return None
 
@@ -108,6 +118,7 @@ class Entity:
         self.coords = new_coords
 
 class Cursor(Entity):
+    # shift_to_free_space_getter should be a function that returns a shift relative to the Entity, where the cursor can be positioned so that it doesn't overlap with other entities
     def __init__(self, shift_to_free_space_getter: Callable[[Entity], Tuple[int, int]], scope: SortedList[Entity], on_select: Callable = None) -> None:
         self.selected = None
         self.__scope: SortedList[Entity] = scope
@@ -118,16 +129,7 @@ class Cursor(Entity):
 
     @property
     def selectable_scope(self) -> List[Entity]:
-        scope: List[Entity] = []
-        for entity in self.__scope:
-            if entity.selectable:
-                scope.append(entity)
-            if isinstance(entity, CardList):
-                for e in entity:
-                    if e.selectable:
-                        scope.append(e)
-
-        return scope
+        return [entity for entity in flatten_iterable(self.__scope) if entity.selectable]
     
     @property
     def index_in_scope(self) -> int | None:
@@ -177,21 +179,31 @@ class Cursor(Entity):
             self.on_select()
     
     def select_next(self) -> None:
-        index_in_scope: int = index_by_identity(iterable = self.selectable_scope, obj = self.selected)
-        if (index_in_scope != len(self.selectable_scope) - 1):
-            self.select(index_in_scope + 1)
+        if (self.index_in_scope != len(self.selectable_scope) - 1):
+            self.select(self.index_in_scope + 1)
     
     def select_previous(self) -> None:
-        index_in_scope: int = index_by_identity(iterable = self.selectable_scope, obj = self.selected)
-        if (index_in_scope != 0):
-            self.select(index_in_scope - 1)
+        if (self.index_in_scope != 0):
+            self.select(self.index_in_scope - 1)
 
 class CardState():
-    def __init__(self, level: str, face_value: str, pos_in_level: int, specific_states: Dict = {}) -> None:
+    # overloads are needed in order to leave the possibility to intialise without the pos_in_level, in that case it will be computed automatically
+    @overload
+    def __init__(self, card_type: Type, level: str, face_value: str, specific_fields: Dict[str, Any] | None = None) -> None: ...
+    @overload
+    def __init__(self, level: str, face_value: str, pos_in_level: int, specific_fields: Dict[str, Any] | None = None) -> None: ...
+
+    def __init__(self, level: str, face_value: str, card_type: Type = None, pos_in_level: int = None, specific_fields: Dict[str, Any] | None = None) -> None:
         self.level = level
         self.face_value = face_value
-        self.pos_in_level = pos_in_level
-        self.specific_states = specific_states # syntax: {'name': str, 'value': Any}
+        self.specific_fields = specific_fields # syntax: {'name': str, 'value': Any}
+
+        if card_type is not None:
+            self.pos_in_level = next(i for i, state in enumerate(card_type.STATES) if state.face_value == self.face_value)
+        elif pos_in_level is not None:
+            self.pos_in_level = pos_in_level
+        else:
+            raise ValueError(f"card_type or pos_in_level must be provided")
     
     def __eq__(self, other: 'CardState') -> bool:
         if not isinstance(other, CardState):
@@ -212,35 +224,40 @@ class Card(Entity):
         cls.LAST_STATE_INDEX = cls.COUNT - 1
 
     @overload
-    def __init__(self, state_index: int, coords: Coordinates = None, selectable: bool = True, public: bool = False) -> None: ...
+    def __init__(self, state_index: int, coords: Coordinates = None, selectable: bool = True, public: bool = False, help_string: str = "") -> None: ...
     @overload
-    def __init__(self, state: CardState, coords: Coordinates = None, selectable: bool = True, public: bool = False) -> None: ...
+    def __init__(self, state: CardState, coords: Coordinates = None, selectable: bool = True, public: bool = False, help_string: str = "") -> None: ...
 
-    def __init__( # provide either state or state index, but not both. if card coordinates are None, it should be a part of a CardList
+    def __init__( 
         self, 
         state: CardState = None, 
         state_index: int = None, 
-        coords: Coordinates = None,
+        coords: Coordinates = None, # if card coordinates are None, it should be a part of a CardList
         selectable: bool = True, 
-        public: bool = False
+        public: bool = False, 
+        help_string: str = ""
     ) -> None:
-        """provide either state or state index, but not both. if card coordinates are None, it should be a part of a CardList"""
-        if not (state == None) ^ (state_index == None):
-            raise ValueError("state xor state_index must be provided")
-
+        """If card coordinates are None, it should be a part of a CardList"""
+        
         if state is not None:
             self.state = state
-            self.state_index = type(self).STATES.index(state)
-        else:
+            try:
+                self.state_index = type(self).STATES.index(state)
+            except ValueError:
+                raise ValueError(f"card_type {type(self)} does not have a state with pos_in_level = {state.pos_in_level} for {Entity(content=state.face_value, color=state.level)}")
+        elif state_index is not None:
             self.state_index = state_index
             self.state = type(self).STATES[self.state_index]
+        else:
+            raise ValueError("state or state_index must be provided")
 
         super().__init__(
             content = self.content, 
             coords = coords,
             color = self.color,
             selectable = selectable,
-            public = public
+            public = public,
+            help_string = help_string
         )
     
     @property
@@ -288,32 +305,32 @@ class BuildingCard(Card):
     SUPPORTS_VALUE_UPGRADES = False
     TYPE_NAME: str = "Buildings"
 
-    def __init__(self, building_type: str, level: str = colors.GREEN, coords: Coordinates = None, public: bool = True) -> None:
+    def __init__(self, building_type: str, level: str = colors.GREEN, coords: Coordinates = None, public: bool = True, help_string: str = "") -> None:
         #TODO: fix docstring
         try:
             state = next(state for state in type(self).STATES if state.level == level and state.face_value == building_type)
         except StopIteration:
             raise ValueError(f"{building_type} cannot be of level {level}")
         
-        super().__init__(state = state, coords = coords, public = public)
+        super().__init__(state = state, coords = coords, public = public, help_string = help_string)
 
 class WarriorCard(Card):
     STATES: List[CardState] = [CardState(level = level, face_value = face_value, pos_in_level = WARRIOR_FACE_VALUES.index(face_value)) for level in MAIN_COLORS for face_value in WARRIOR_FACE_VALUES]
     TYPE_NAME: str = "Warriors"
-    def __init__(self, coords: Coordinates = None, power: int = 0, public: bool = False) -> None:
+    def __init__(self, coords: Coordinates = None, power: int = 0, public: bool = False, help_string: str = "") -> None:
         #TODO: fix docstring
-        super().__init__(state_index = power, coords = coords, public = public)
+        super().__init__(state_index = power, coords = coords, public = public, help_string = help_string)
 
 class GuardCard(WarriorCard):
     TYPE_NAME: str = "Guards"
-    def __init__(self, coords: Coordinates = None, power: int = 0, public: bool = True) -> None:
-        super().__init__(power = power, coords = coords, public = public)
+    def __init__(self, coords: Coordinates = None, power: int = 0, public: bool = True, help_string: str = "") -> None:
+        super().__init__(power = power, coords = coords, public = public, help_string = help_string)
 
 class CardList(Entity):
-    def __init__(self, coords: Coordinates, card_type: Type[Card], cards: List[Card] | None = None, selectable: bool = True, public: bool = True) -> None:
+    def __init__(self, coords: Coordinates, card_type: Type[Card], cards: List[Card] | None = None, selectable: bool = True, public: bool = True, help_string: str = "") -> None:
         self.card_type: Type[Card] = card_type
         self.__cards: List[Card] = cards if cards is not None else []
-        super().__init__(content = self.content, coords = coords, color = colors.NONE, selectable = selectable, public = public)
+        super().__init__(content = self.content, coords = coords, color = colors.NONE, selectable = selectable, public = public, help_string = help_string)
     
     def __repr__(self) -> str:
         return self.label_string
@@ -325,6 +342,9 @@ class CardList(Entity):
     @property
     def label_string(self) -> str:
         return self.card_type.TYPE_NAME + ":"
+    
+    def stringify_cards(self, start, end) -> str:
+        return remove_color_codes("".join(map(str, self.__cards[start:end])))
     
     def get_public_slice(self) -> 'CardList':
         public_cards: List[Card] = [card for card in self.__cards if card.public]
@@ -347,13 +367,16 @@ class CardList(Entity):
     def update_card_coordinates(self, index: int) -> None: ...
 
     def update_card_coordinates(self, begin: int = None, end: int = None, index: int = 0):
-        for i in range(begin if begin is not None else index, end if end is not None else (index + 1)):
-            self.__cards[i].coords = Coordinates(self.coords.x + len(self.label_string) + (i * 2 + 1), self.coords.y) # index is multiplied by two, because the cards are separated by whitespaces
+        s = begin if begin is not None else index
+        e = end if end is not None else (index + 1)
+        for i in range(s, e):
+            length_of_previous_cards = len(self.stringify_cards(0, i))
+            self.__cards[i].coords = Coordinates(self.coords.x + len(self.label_string) + length_of_previous_cards + i + 1, self.coords.y) # i is added, because the cards are separated by whitespaces
 
     def set_coords(self, new_coords) -> None:
         if self.coords != new_coords:
             super().set_coords(new_coords)
-            self.update_card_coordinates(begin = 0, end = len(self.__cards))
+            self.update_card_coordinates(begin = 0, end = len(self))
 
     def __getitem__(self, index: int) -> Card:
         return self.__cards[index]
