@@ -1,5 +1,3 @@
-import select
-import time
 from shared_definitions import *
 
 HOST: str = ''
@@ -79,7 +77,7 @@ def handle_client(conn: socket.socket, addr: Any) -> None:
                 print_player_info(player_color, addr, player_num, "terminated")
             else: # the error is initiated by this connection
                 conn.close()
-                print_player_info(player_color, addr, player_num, "disconnected.")
+                print_player_info(player_color, addr, player_num, "disconnected")
                 if other_player:
                     print("Unable to continue the game session. Terminating remaining connections...")
                     sendall_with_end(other_player, SOCKET_TERMINATION_REQUEST)
