@@ -1,5 +1,3 @@
-import select
-import time
 from shared_definitions import *
 
 HOST: str = ''

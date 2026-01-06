@@ -267,6 +267,10 @@ class GameController:
 
     @classmethod
     def send_public_entities(cls) -> None:
+        _, ready_to_write, _ = select.select([], [s], [], 1.0) # if server is not ready to write - that means the connection is closed. read the error
+        if not ready_to_write:
+            recvall(s)
+
         public_entities: List[Entity] = []
         for public_entity in [e for e in cls.my_entities if e.public]:
             if isinstance(public_entity, CardList):
