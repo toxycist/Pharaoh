@@ -6,7 +6,13 @@ import re
 from typing import Dict, Tuple, List, Type, Any, Callable, overload
 from _collections_abc import Iterable
 from collections import namedtuple
+from os import getenv
+import dotenv
 from sortedcontainers import SortedList
+
+dotenv.load_dotenv()
+HOST: str | None = getenv('HOST')
+PORT: int | None = int(getenv('PORT'))
 
 GAME_FIELD_WIDTH: int = 81 # starts from 1
 GAME_FIELD_HEIGHT: int = 21 # starts from 1

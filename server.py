@@ -1,8 +1,5 @@
 from shared_definitions import *
 
-HOST: str = ''
-PORT: int = 1717
-
 connections: Dict[Tuple[socket.socket, Any], int] = {}
 
 PLAYER_COLORS = [colors.BLUE, colors.YELLOW]

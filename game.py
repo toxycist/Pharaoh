@@ -1,5 +1,4 @@
-import dotenv
-from os import system, getenv, name as _os_name
+from os import system, name as _os_name
 import random
 from shared_definitions import *
 import sys
@@ -49,10 +48,6 @@ def close_game_on_space() -> None:
     while ' ' != getch(): pass
     GameController.close_game = True
     sys.exit()
-
-dotenv.load_dotenv()
-HOST: str | None = getenv('IP')
-PORT: int = 1717
 
 PLAYER_SIDE_HEIGHT: int = 4
 # coordinates should always be in the form of (x, y)
