@@ -11,8 +11,8 @@ import dotenv
 from sortedcontainers import SortedList
 
 dotenv.load_dotenv()
-HOST: str | None = getenv('HOST')
-PORT: int | None = int(getenv('PORT'))
+HOST: str = getenv('HOST') or "0.0.0.0"
+PORT: int = int(getenv('PORT') or 1717)
 
 GAME_FIELD_WIDTH: int = 81 # starts from 1
 GAME_FIELD_HEIGHT: int = 21 # starts from 1
@@ -61,7 +61,7 @@ LOWER_FIELD_BORDER: str = ("╰" + "─" * (GAME_FIELD_WIDTH - 2) + "╯")
 LATERAL_FIELD_BORDER_CHARACTER: str = "│"
 PLAYER_SIDE_BORDER: str = ("-" * (GAME_FIELD_WIDTH - 2))
 
-PLAYER_COLORS: List[str] = [colors.NONE, colors.BLUE, colors.YELLOW] # PLAYER_COLORS[0] is colors.NONE so that each player's corresponding color is at the index player_num, not player_num - 1
+PLAYER_COLORS: List[str] = ["", colors.BLUE, colors.YELLOW] # PLAYER_COLORS[0] is "" so that each player's corresponding color is at the index player_num, not player_num - 1
 MAIN_COLORS: List[str] = [colors.GREEN, colors.BLUE, colors.YELLOW, colors.RED]
 SUPER_COLORS: List[str] = [colors.RAINBOW]
 WARRIOR_FACE_VALUES: List[str] = [face_values.NUM1, face_values.NUM2, face_values.NUM3, 

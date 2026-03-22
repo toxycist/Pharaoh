@@ -18,10 +18,10 @@ def reject_client(conn: socket.socket, addr: Any) -> None:
             data: bytes = b""
             while data:
                 data = conn.recv(1024) # wait until the client disconnects
-            return
         finally:
             print_player_info(colors.RED, addr, len(PLAYER_COLORS) + 1, "disconnected")
-            return
+            
+    return
         
 def handle_client(conn: socket.socket, addr: Any) -> None:
     player_num: int = connections[(conn, addr)]
