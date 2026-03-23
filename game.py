@@ -262,9 +262,9 @@ class GameController:
 
     @classmethod
     def send_public_entities(cls) -> None:
-        _, ready_to_write, _ = select.select([], [s], [], 1.0) # if server is not ready to write - that means the connection is closed. read the error
-        if not ready_to_write:
-            recvall(s)
+        ready_to_read, _, _ = select.select([s], [], [], 0) # if the server has something to say at this point - it's an error
+        if ready_to_read:
+            recvall(s) # read the error
 
         public_entities: List[Entity] = []
         for public_entity in [e for e in cls.my_entities if e.public]:
@@ -374,7 +374,7 @@ GameController.cursor = Cursor(GameController.get_shift_to_free_space, scope = G
 
 ##### [DIFFICULT ZONE] PROBABILITIES ##### TODO: #1
 def triangular_number(n: int) -> int:
-    return (n**2 + n) / 2 # factorial, but with sum
+    return (n**2 + n) // 2 # factorial, but with sum
 
 def get_triangular_sector(n: int) -> int:
     return int((math.sqrt(1 + 8 * n) - 1) // 2) + 1 # this formula returns the number m, such that argument number n is greater than or equal to the m-th triangular number
