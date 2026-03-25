@@ -247,9 +247,9 @@ class Card(Entity):
         """If card coordinates are None, it should be a part of a CardList"""
         
         if state is not None:
-            self.state = state
             try:
                 self.state_index = type(self).STATES.index(state)
+                self.state = state
             except ValueError:
                 raise ValueError(f"card_type {type(self)} does not have a state with pos_in_level = {state.pos_in_level} for {Entity(content=state.face_value, color=state.level)}")
         elif state_index is not None:
@@ -324,14 +324,11 @@ class BuildingCard(Card):
 class WarriorCard(Card):
     STATES: List[CardState] = [CardState(level = level, face_value = face_value, pos_in_level = WARRIOR_FACE_VALUES.index(face_value)) for level in MAIN_COLORS for face_value in WARRIOR_FACE_VALUES]
     TYPE_NAME: str = "Warriors"
-    def __init__(self, coords: Coordinates = None, power: int = 0, public: bool = False, help_string: str = "") -> None:
-        #TODO: fix docstring
-        super().__init__(state_index = power, coords = coords, public = public, help_string = help_string)
 
 class GuardCard(WarriorCard):
     TYPE_NAME: str = "Guards"
-    def __init__(self, coords: Coordinates = None, power: int = 0, public: bool = True, help_string: str = "") -> None:
-        super().__init__(power = power, coords = coords, public = public, help_string = help_string)
+    def __init__(self, coords: Coordinates = None, state_index: int = 0, public: bool = True, help_string: str = "") -> None:
+        super().__init__(state_index = state_index, coords = coords, public = public, help_string = help_string)
 
 class CardList(Entity):
     def __init__(self, coords: Coordinates, card_type: Type[Card], cards: List[Card] | None = None, selectable: bool = True, public: bool = True, help_string: str = "") -> None:

@@ -1,6 +1,7 @@
 from os import system, name as _os_name
 import random
 from shared_definitions import *
+from types import SimpleNamespace
 import sys
 import math
 
@@ -90,7 +91,7 @@ class ActionEntry(Entity):
     def __init__(self, content: str, action: Callable, coords: Coordinates, help_string: str = "", entity_requirements: Requirements = None, color = colors.NONE, selectable = True, public = False):
         super().__init__(content, color, coords, selectable, public, help_string)
         self.action = action
-        self.entity_requirements = entity_requirements 
+        self.entity_requirements = entity_requirements
 
 def execute_action(action_entry: ActionEntry, *entity_lists: List[Entity]) -> None:
     if entity_lists:
@@ -125,6 +126,24 @@ class GameController:
     second_player_joined: bool = False
 
     controls: Dict[str, Callable] = {}
+    action_entries: SimpleNamespace = SimpleNamespace(
+        upgrade_value_one_card = ActionEntry("Upgrade the value of a certain card", 
+                    coords = (ACTION_MENU_START_COORDINATES.x + 2, ACTION_MENU_START_COORDINATES.y + 1 + len(current_action_menu)),
+                    action = lambda list: (
+                        list[0].upgrade_value(), # there will only be one item, as specified in entity_requirements
+                        GameController.send_public_entities(), 
+                        GameController.end_turn()
+                        ),
+                    entity_requirements = Requirements(
+                        quantities = [1],
+                        requirements = [
+                            lambda e: (
+                                hasattr(type(e), "SUPPORTS_VALUE_UPGRADES") and type(e).SUPPORTS_VALUE_UPGRADES == True
+                            )
+                        ]
+                    ),
+                    help_string = "Select 1 card whose value can be upgraded."),
+    )
 
     def __new__(cls):
         raise RuntimeError(f"class {cls} is not meant to be instantiated")
@@ -299,38 +318,7 @@ class GameController:
         menu: List[Entity] = []
 
         if isinstance(entity, BandageCard) and entity.content == face_values.FACE_VALUE_BANDAGE:
-            menu.append(ActionEntry("Upgrade the value of a certain card", 
-                                    coords = (ACTION_MENU_START_COORDINATES.x + 2, ACTION_MENU_START_COORDINATES.y + 1 + len(menu)),
-                                    action = lambda list: (
-                                        list[0].upgrade_value(), # there will only be one item, as specified in entity_requirements
-                                        cls.send_public_entities(), 
-                                        cls.end_turn()
-                                        ),
-                                    entity_requirements = Requirements(
-                                        quantities = [1],
-                                        requirements = [
-                                            lambda e: (
-                                                hasattr(type(e), "SUPPORTS_VALUE_UPGRADES") and type(e).SUPPORTS_VALUE_UPGRADES == True
-                                            )
-                                        ]
-                                    ),
-                                    help_string = "Select 1 card whose value can be upgraded."))
-            menu.append(ActionEntry("2", 
-                                    coords = (ACTION_MENU_START_COORDINATES.x + 2, ACTION_MENU_START_COORDINATES.y + 1 + len(menu)),
-                                    action = lambda: (
-                                        cls.cursor.selected.upgrade_level(), 
-                                        cls.send_public_entities(), 
-                                        cls.end_turn()
-                                        ),
-                                    help_string = "2"))
-            menu.append(ActionEntry("3", 
-                                    coords = (ACTION_MENU_START_COORDINATES.x + 2, ACTION_MENU_START_COORDINATES.y + 1 + len(menu)),
-                                    action = lambda: (
-                                        cls.cursor.selected.upgrade_level(), 
-                                        cls.send_public_entities(), 
-                                        cls.end_turn()
-                                        ),
-                                    help_string = "3"))
+            menu.append(GameController.action_entries.upgrade_value_one_card)
         else:
             cls.set_footer(Entity("No action can be performed by this entity", colors.NONE, coords = ACTION_MENU_START_COORDINATES))
             return False
@@ -372,16 +360,58 @@ GameController.cursor = Cursor(GameController.get_shift_to_free_space, scope = G
     GameController.refresh_screen()
     ))
 
-##### [DIFFICULT ZONE] PROBABILITIES ##### TODO: #1
-def triangular_number(n: int) -> int:
-    return (n**2 + n) // 2 # factorial, but with sum
+##### CARD DRAWING #####
+@overload
+def draw_a_card(card_type: type[Card], to_cardlist: CardList, public: bool, cruelty: int = 10) -> None:
+    """
+    Draw a card of the given card class.
 
-def get_triangular_sector(n: int) -> int:
-    return int((math.sqrt(1 + 8 * n) - 1) // 2) + 1 # this formula returns the number m, such that argument number n is greater than or equal to the m-th triangular number
+    :param card_type: The Card class to instantiate. Must define a COUNT attribute representing the number of possible unique cards of this type.
+    :type card_type: type[Card]
+    
+    :param to_cardlist: The list where the drawn card will be appended.
+    :type to_cardlist: CardList
 
-def draw_a_card(card_type: type[Entity], to_cardlist: CardList, public: bool) -> None:
-    picked_card_power: int = abs(card_type.COUNT - get_triangular_sector(random.randint(1, triangular_number(card_type.COUNT)))) # reversing the triangular sector number is needed because weak cards should be more common
-    to_cardlist.append(card_type(power = picked_card_power, public = True))
+    :param public: Whether the drawn card should be marked as public.
+    :type public: bool
+
+    :param cruelty: The bigger the number - the rarer are the strong cards.
+    :type cruelty: int
+    """
+
+
+@overload
+def draw_a_card(card_pool: List[Card], to_cardlist: CardList, public: bool, cruelty: int = 10) -> None:
+    """
+    Draw a card from a provided list of cards.
+
+    :param card_pool: A list of Card objects to draw from.
+    :type card_pool: List[Card]
+
+    :param to_cardlist: The list where the drawn card will be appended.
+    :type to_cardlist: CardList
+
+    :param public: Whether the drawn card should be marked as public.
+    :type public: bool
+
+    :param cruelty: The bigger the number - the rarer are the strong cards.
+    :type cruelty: int
+    """
+
+def draw_a_card(source: type[Card] | List[Card], to_cardlist: CardList, public: bool, cruelty: int = 10) -> None:
+    r = random.random()
+    drawing_function = lambda count: min(int((r ** cruelty) * count), count - 1)
+
+    if isinstance(source, list):
+        count = len(source)
+        index = drawing_function(count)
+        drawn_card = source[index]
+    else:
+        count = source.COUNT
+        state_index = drawing_function(count)
+        drawn_card = source(state_index = state_index, public = public)
+
+    to_cardlist.append(drawn_card)
 #####
 
 def on_spacebar() -> None:
@@ -461,23 +491,6 @@ try:
     GameController.my_entities.add(GameController.main_bandage_list)
     GameController.my_entities.add(GameController.main_building_list)
 
-    ## TESTING
-    GameController.main_bandage_list.append(BandageCard(state = CardState(card_type = BandageCard, level = colors.GREEN, face_value = face_values.FACE_VALUE_BANDAGE), public = True))
-    GameController.main_bandage_list.append(BandageCard(state = CardState(card_type = BandageCard, level = colors.RED, face_value = face_values.LEVEL_BANDAGE), public = True))
-    GameController.main_bandage_list.append(BandageCard(state = CardState(card_type = BandageCard, level = colors.YELLOW, face_value = face_values.COMBINED_BANDAGE), public = True))
-    GameController.main_warrior_list.append(WarriorCard(power = 0, public = True))
-    GameController.main_warrior_list.append(WarriorCard(power = 11, public = True))
-    GameController.main_warrior_list.append(WarriorCard(power = 36, public = True))
-    GameController.main_warrior_list.append(WarriorCard(power = 21, public = True))
-    GameController.main_warrior_list.append(WarriorCard(power = 6, public = True))
-
-    # GameController.my_entities.add(WarriorCard(power = 0, public = True, coords = Coordinates(17, 17)))
-    # GameController.my_entities.add(WarriorCard(power = 1, public = True, coords = Coordinates(17, 18)))
-    # GameController.my_entities.add(WarriorCard(power = 2, public = True, coords = Coordinates(17, 16)))
-    # GameController.my_entities.add(WarriorCard(power = 3, public = True, coords = Coordinates(16, 17)))
-    # GameController.my_entities.add(WarriorCard(power = 4, public = True, coords = Coordinates(18, 17)))
-    ##
-
     GameController.refresh_screen()
 
     GameController.send_public_entities()
@@ -496,19 +509,13 @@ try:
         ' ': on_spacebar,
         'q': on_q,
         '1': lambda: (
-            GameController.main_warrior_list.append(WarriorCard(power = 0, public = True)), 
+            draw_a_card(WarriorCard, GameController.main_warrior_list, public = True), 
             GameController.refresh_screen(), 
-            GameController.send_public_entities(), 
+            GameController.send_public_entities(),
             GameController.end_turn()
             ),
         '2': lambda: (
-            GameController.main_bandage_list.append(BandageCard(state_index = 0, public = True)), 
-            GameController.refresh_screen(), 
-            GameController.send_public_entities(), 
-            GameController.end_turn()
-            ),
-        '3': lambda: (
-            GameController.main_building_list.append(BuildingCard(building_type = face_values.HOSPITAL)), 
+            draw_a_card(BandageCard, GameController.main_bandage_list, public = True),
             GameController.refresh_screen(), 
             GameController.send_public_entities(), 
             GameController.end_turn()
