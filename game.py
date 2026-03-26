@@ -46,12 +46,13 @@ def clear_screen() -> None:
     system('cls' if _os_name == 'nt' else 'clear')
 
 def close_game_on_space() -> None:
-    while ' ' != getch(): pass
+    while getch() != ' ': pass
     GameController.close_game = True
     sys.exit()
 
 PLAYER_SIDE_HEIGHT: int = 4
 # coordinates should always be in the form of (x, y)
+FIGHTING_CARD_COORDINATES = Coordinates(MIN_X + 23, MAX_Y - 9)
 PHARAOH_COORDINATES = Coordinates(MIN_X + 10, MAX_Y - 3)
 GUARD_COORDINATES_LIST: List[Coordinates] = [Coordinates(MIN_X + 7, MAX_Y - 3), Coordinates(MIN_X + 13, MAX_Y - 3)]
 MAIN_WARRIOR_LIST_COORDINATES = Coordinates(MIN_X + 23, MAX_Y - 5)
@@ -106,7 +107,8 @@ class GameController:
     my_turn: bool = False
     my_entities: SortedList[Entity] = SortedList(key = lambda e: (e.coords.y, e.coords.x) if e.coords else (-1, -1)) # apparently fuckass SortedList uses its key even when checking for membership, so providing a value without coords just fucking crashes the program. this is why the check for e.coords is needed
     received_entities: SortedList[Entity] = SortedList(key = DEFAULT_SCOPE_KEY)
-    main_warrior_list: CardList = CardList(card_type = WarriorCard, coords = MAIN_WARRIOR_LIST_COORDINATES, help_string = "main warrior list")
+    fighting_card_slot: CardList = CardList(card_type = WarriorCard, coords = FIGHTING_CARD_COORDINATES, empty_label = True, max_size = 1, selectable = False)
+    main_warrior_list: CardList = CardList(card_type = WarriorCard, coords = MAIN_WARRIOR_LIST_COORDINATES, help_string = "This is your warrior list")
     main_bandage_list: CardList = CardList(card_type = BandageCard, coords = MAIN_BANDAGE_LIST_COORDINATES)
     main_building_list: CardList = CardList(card_type = BuildingCard, coords = MAIN_BUILDING_LIST_COORDINATES)
     guard_list: List[GuardCard] = [GuardCard(coords = GUARD_COORDINATES_LIST[0]), GuardCard(coords = GUARD_COORDINATES_LIST[1])]
@@ -122,6 +124,7 @@ class GameController:
     selection_mode_selected_entities: List[List[Entity]] = []
 
     current_action_menu: SortedList[Entity] = SortedList(key = DEFAULT_SCOPE_KEY)
+    current_action_menu_owner: Entity = None
     
     second_player_joined: bool = False
 
@@ -143,6 +146,16 @@ class GameController:
                         ]
                     ),
                     help_string = "Select 1 card whose value can be upgraded."),
+        put_out_to_battle = ActionEntry("Put this card out to battle", 
+                    coords = (ACTION_MENU_START_COORDINATES.x + 2, ACTION_MENU_START_COORDINATES.y + 1 + len(current_action_menu)),
+                    action = lambda: (
+                        GameController.current_action_menu_owner.cardlist.remove(GameController.current_action_menu_owner),
+                        setattr(GameController.current_action_menu_owner, "help_string", "This is your fighting card"),
+                        GameController.fighting_card_slot.append(GameController.current_action_menu_owner),
+                        GameController.send_public_entities(),
+                        GameController.end_turn()
+                        ),
+                    help_string = "...")
     )
 
     def __new__(cls):
@@ -150,8 +163,13 @@ class GameController:
 
     @classproperty
     def all_entities(cls) -> SortedList[Entity]:
-        return SortedList(cls.my_entities + cls.received_entities + cls.current_action_menu + cls.footer, key = DEFAULT_SCOPE_KEY)
-    
+        result = SortedList(cls.my_entities + cls.received_entities + cls.current_action_menu + cls.footer, key = DEFAULT_SCOPE_KEY)
+        if not cls.cursor.hidden:
+            if cls.cursor not in result:
+                result.add(cls.cursor)
+        
+        return result
+
     @classproperty
     def default_footer(cls) -> Entity:
         return Entity(cls.cursor.selected.help_string, colors.NONE, coords = cls.get_footer_start_coordinates())
@@ -163,7 +181,6 @@ class GameController:
         cls.footer.add(Entity(content = f"Selected: ", color = colors.NONE, coords = Coordinates(cls.footer[-1].coords.x, cls.footer[-1].coords.y + 1)))
         cls.selection_mode_action = action
         cls.selection_mode_quantities = quantities.copy() # quantities is the only list here, that comes directly from the Requirements object in the ActionEntry, so we need to ensure it stays unchanged there
-        cls.my_entities.add(cls.cursor) # make cursor visible, because displayed entities are taken from my_entities rather than from whatever subscope cursor is now in
         for quantity, check in zip(cls.selection_mode_quantities, requirements):
             new_scope = SortedList([e for e in flatten_iterable(cls.my_entities) if check(e)], key = DEFAULT_SCOPE_KEY)
             if len(new_scope) < quantity:
@@ -319,7 +336,10 @@ class GameController:
 
         if isinstance(entity, BandageCard) and entity.content == face_values.FACE_VALUE_BANDAGE:
             menu.append(GameController.action_entries.upgrade_value_one_card)
-        else:
+        if isinstance(entity, WarriorCard) and not isinstance(entity, GuardCard) and len(GameController.fighting_card_slot) == 0:
+            menu.append(GameController.action_entries.put_out_to_battle)
+            
+        if not menu:
             cls.set_footer(Entity("No action can be performed by this entity", colors.NONE, coords = ACTION_MENU_START_COORDINATES))
             return False
 
@@ -334,12 +354,14 @@ class GameController:
 
         cls.current_action_menu.update(menu)
         cls.update_footer_location()
+        cls.current_action_menu_owner = cls.cursor.selected # save the entity that owns the menu
         return True
     
     @classmethod
     def close_action_menu(cls) -> None:
         cls.current_action_menu.clear()
         cls.update_footer_location()
+        cls.current_action_menu_owner = None
     
     @classmethod
     def get_footer_start_coordinates(cls) -> Coordinates:
@@ -422,8 +444,7 @@ def on_spacebar() -> None:
         reqs = GameController.cursor.selected.entity_requirements
         if reqs:
             if not GameController.enable_selection_mode(action = GameController.cursor.selected, quantities = reqs.quantities, requirements = reqs.requirements): # enable_selection_mode returns False if failed
-                GameController.cursor.scope_forward(GameController.current_action_menu)
-                GameController.set_footer(Entity("Not enough entities to perform an action.", colors.NONE, coords = GameController.get_footer_start_coordinates()))
+                GameController.set_footer(Entity("Not enough entities to perform this action.", colors.NONE, coords = GameController.get_footer_start_coordinates()))
             GameController.refresh_screen()
         else:
             execute_action(GameController.cursor.selected)
@@ -436,9 +457,12 @@ def on_spacebar() -> None:
 def on_q() -> None:
     try:
         GameController.cursor.scope_backward()
-        if GameController.current_action_menu != [] and GameController.current_action_menu not in GameController.cursor.scope_stack:
-            GameController.close_action_menu()
-        GameController.refresh_screen()
+        if GameController.selection_mode == True:
+            GameController.disable_selection_mode()
+        else:
+            if GameController.current_action_menu != [] and GameController.current_action_menu not in GameController.cursor.scope_stack:
+                GameController.close_action_menu()
+            GameController.refresh_screen()
     except IndexError:
         pass
 
@@ -490,6 +514,7 @@ try:
     GameController.my_entities.add(GameController.main_warrior_list)
     GameController.my_entities.add(GameController.main_bandage_list)
     GameController.my_entities.add(GameController.main_building_list)
+    GameController.my_entities.add(GameController.fighting_card_slot)
 
     GameController.refresh_screen()
 
@@ -521,6 +546,8 @@ try:
             GameController.end_turn()
             )
     }
+
+    GameController.main_bandage_list.append(BandageCard(state = CardState(card_type = BandageCard, level = colors.GREEN, face_value = face_values.FACE_VALUE_BANDAGE)))
 
     while not GameController.close_game:
         if GameController.my_turn:

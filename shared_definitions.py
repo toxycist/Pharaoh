@@ -132,6 +132,7 @@ class Cursor(Entity):
         self.scope_stack: List[SortedList[Entity]] = [self.__scope]
         self.get_shift_to_free_space = shift_to_free_space_getter
         self.on_select = on_select
+        self.hidden: bool = True
         super().__init__(content=CURSOR_UP, color=colors.WHITE, public=False)
 
     @property
@@ -161,10 +162,12 @@ class Cursor(Entity):
     def show(self) -> None:
         if len(self.selectable_scope) > 0 and self not in self.__scope:
             self.select(index_in_scope = 0)
+            self.hidden = False
     
     def hide(self) -> None:
         if self in self.__scope:
             self.__scope.remove(self)
+            self.hidden = True
     
     def select(self, index_in_scope: int) -> None:
         self.selected = self.selectable_scope[index_in_scope]
@@ -242,7 +245,7 @@ class Card(Entity):
         coords: Coordinates = None, # if card coordinates are None, it should be a part of a CardList
         selectable: bool = True, 
         public: bool = False, 
-        help_string: str = ""
+        help_string: str = "",
     ) -> None:
         """If card coordinates are None, it should be a part of a CardList"""
         
@@ -257,6 +260,8 @@ class Card(Entity):
             self.state = type(self).STATES[self.state_index]
         else:
             raise ValueError("state or state_index must be provided")
+        
+        self.cardlist = None
 
         super().__init__(
             content = self.content, 
@@ -305,6 +310,7 @@ class Card(Entity):
 class BandageCard(Card):
     STATES: List[CardState] = [CardState(level = level, face_value = face_value, pos_in_level = BANDAGE_FACE_VALUES.index(face_value)) for level in MAIN_COLORS for face_value in BANDAGE_FACE_VALUES]
     TYPE_NAME: str = "Bandages"
+    SUPPORTS_VALUE_UPGRADES = False
 
 class BuildingCard(Card):
     STATES: List[CardState] = ([CardState(level = level, face_value = face_value, pos_in_level = BUILDING_FACE_VALUES.index(face_value)) for level in MAIN_COLORS for face_value in BUILDING_FACE_VALUES] + 
@@ -331,9 +337,14 @@ class GuardCard(WarriorCard):
         super().__init__(state_index = state_index, coords = coords, public = public, help_string = help_string)
 
 class CardList(Entity):
-    def __init__(self, coords: Coordinates, card_type: Type[Card], cards: List[Card] | None = None, selectable: bool = True, public: bool = True, help_string: str = "") -> None:
+    def __init__(self, coords: Coordinates, card_type: Type[Card], cards: List[Card] | None = None, max_size: int = None, empty_label: bool = False, selectable: bool = True, public: bool = True, help_string: str = "") -> None:
         self.card_type: Type[Card] = card_type
-        self.__cards: List[Card] = cards if cards is not None else []
+        self.max_size = max_size
+        self.empty_label = empty_label
+        if max_size and cards and len(cards) > max_size:
+            raise OverflowError(f"{self} exceeds maximum size of {self.max_size}")
+        else:
+            self.__cards: List[Card] = cards if cards is not None else []
         super().__init__(content = self.content, coords = coords, color = colors.NONE, selectable = selectable, public = public, help_string = help_string)
     
     def __repr__(self) -> str:
@@ -345,21 +356,28 @@ class CardList(Entity):
     
     @property
     def label_string(self) -> str:
-        return self.card_type.TYPE_NAME + ":"
+        return "" if self.empty_label else self.card_type.TYPE_NAME + ": "
     
     def stringify_cards(self, start, end) -> str:
         return remove_color_codes("".join(map(str, self.__cards[start:end])))
     
     def get_public_slice(self) -> 'CardList':
         public_cards: List[Card] = [card for card in self.__cards if card.public]
-        return CardList(coords = self.coords, card_type = self.card_type, cards = public_cards, public = True)
+        return CardList(coords = self.coords, card_type = self.card_type, cards = public_cards, empty_label = self.empty_label, selectable = self.selectable, public = True)
 
     def remove(self, card: Card) -> None:
+        index = self.__cards.index(card)
+        card.cardlist = None
         self.__cards.remove(card)
+        self.update_card_coordinates(begin = index, end = len(self))
     
     def append(self, card: Card) -> None:
-        self.__cards.append(card)
-        self.update_card_coordinates(index = len(self.__cards) - 1)
+        if self.max_size and len(self) + 1 > self.max_size:
+            raise OverflowError(f"{self} exceeds maximum size of {self.max_size}")
+        else:
+            self.__cards.append(card)
+            card.cardlist = self
+            self.update_card_coordinates(index = len(self.__cards) - 1)
     
     def __setitem__(self, index: int, card: Card) -> None:
         card.coords = self.__cards[index].coords
@@ -371,11 +389,33 @@ class CardList(Entity):
     def update_card_coordinates(self, index: int) -> None: ...
 
     def update_card_coordinates(self, begin: int = None, end: int = None, index: int = 0):
+        """
+        This method recalculates the coordinates of cards so they are displayed
+        in a horizontal sequence to the right of the list's label. Cards are
+        separated by a single space.
+
+        The method can update either:
+        - a single card (using `index`), or
+        - a range of cards (using `begin` and `end`).
+
+        Parameter precedence:
+        If `begin` and/or `end` are provided, they define the range `[begin, end)`.
+        Otherwise, only the card at `index` is updated.
+
+        :param begin: The starting index (inclusive) of cards whose coordinates should be updated.
+        :type begin: int | None
+
+        :param end: The ending index (exclusive) of cards whose coordinates should be updated.
+        :type end: int | None
+
+        :param index: The index of a single card to update when `begin` and `end` are not specified.
+        :type index: int
+        """
         s = begin if begin is not None else index
         e = end if end is not None else (index + 1)
         for i in range(s, e):
             length_of_previous_cards = len(self.stringify_cards(0, i))
-            self.__cards[i].coords = Coordinates(self.coords.x + len(self.label_string) + length_of_previous_cards + i + 1, self.coords.y) # i is added, because the cards are separated by whitespaces
+            self.__cards[i].coords = Coordinates(self.coords.x + len(self.label_string) + length_of_previous_cards + i, self.coords.y) # i is added, because the cards are separated by whitespaces
 
     def set_coords(self, new_coords) -> None:
         if self.coords != new_coords:
