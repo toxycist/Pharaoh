@@ -43,7 +43,7 @@ def handle_client(conn: socket.socket, addr: Any) -> None:
                 elif encoded_data == SOCKET_SHARED_ENTITIES_UPDATE:
                     public_entities: List[Entity] = pickle.loads(recvall(conn))
                     for entity in public_entities:
-                        print_player_info(player_color, addr, player_num, f"Received {"iterable " if isinstance(entity, Iterable) else ""}entity [{entity}] at {entity.coords}")
+                        print_player_info(player_color, addr, player_num, f"Received {'iterable ' if isinstance(entity, Iterable) else ''}entity [{entity}] at {entity.coords}")
 
                         if isinstance(entity, Iterable) and len(entity) > 0:
                             print_player_info(player_color, addr, player_num, f"Iterable entity [{entity}] contains:")
