@@ -456,10 +456,11 @@ def on_spacebar() -> None:
 
 def on_q() -> None:
     try:
-        GameController.cursor.scope_backward()
         if GameController.selection_mode == True:
             GameController.disable_selection_mode()
+            GameController.cursor.scope_backward()
         else:
+            GameController.cursor.scope_backward()
             if GameController.current_action_menu != [] and GameController.current_action_menu not in GameController.cursor.scope_stack:
                 GameController.close_action_menu()
             GameController.refresh_screen()
