@@ -331,6 +331,16 @@ class WarriorCard(Card):
     STATES: List[CardState] = [CardState(level = level, face_value = face_value, pos_in_level = WARRIOR_FACE_VALUES.index(face_value)) for level in MAIN_COLORS for face_value in WARRIOR_FACE_VALUES]
     TYPE_NAME: str = "Warriors"
 
+    def __gt__(self, other: WarriorCard):
+        if not isinstance(other, WarriorCard):
+            return False
+        return self.state_index > other.state_index
+    
+    def __lt__(self, other: WarriorCard):
+        if not isinstance(other, WarriorCard):
+            return False
+        return self.state_index < other.state_index
+
 class GuardCard(WarriorCard):
     TYPE_NAME: str = "Guards"
     def __init__(self, coords: Coordinates = None, state_index: int = 0, public: bool = True, help_string: str = "") -> None:
@@ -345,6 +355,8 @@ class CardList(Entity):
             raise OverflowError(f"{self} exceeds maximum size of {self.max_size}")
         else:
             self.__cards: List[Card] = cards if cards is not None else []
+        for card in self.__cards:
+            card.cardlist = self
         super().__init__(content = self.content, coords = coords, color = colors.NONE, selectable = selectable, public = public, help_string = help_string)
     
     def __repr__(self) -> str:
@@ -444,7 +456,8 @@ SOCKET_CONNECTION_ESTABLISHED: bytes = b"CONNECTION ESTABLISHED"
 SOCKET_LOBBY_FULL: bytes = b"LOBBY FULL"
 SOCKET_SHARED_ENTITIES_UPDATE: bytes = b"SHARED ENTITIES UPDATE"
 SOCKET_YOUR_TURN: bytes = b"YOUR TURN"
-SOCKET_TERMINATION_REQUEST = b"TERMINATE"
+SOCKET_TERMINATION_REQUEST = b"TERMINATION REQUEST"
+SOCKET_BATTLE_START = b"BATTLE START"
 
 class TerminationRequest(Exception):
     pass

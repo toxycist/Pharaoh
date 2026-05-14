@@ -66,8 +66,8 @@ def handle_client(conn: socket.socket, addr: Any) -> None:
                             else:
                                 continue
 
-                elif encoded_data == SOCKET_YOUR_TURN:
-                    sendall_with_end(other_player, SOCKET_YOUR_TURN)
+                elif encoded_data == SOCKET_YOUR_TURN or encoded_data == SOCKET_BATTLE_START:
+                    sendall_with_end(other_player, encoded_data)
         except ConnectionError:
             if len(connections) == 0: # the error is initiated by another connection, which has already cleared up the list of connections
                 conn.close()

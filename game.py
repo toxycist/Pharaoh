@@ -3,7 +3,7 @@ import random
 from shared_definitions import *
 from types import SimpleNamespace
 import sys
-import math
+import time
 
 if _os_name == "nt":
     import msvcrt
@@ -62,6 +62,109 @@ ACTION_MENU_START_COORDINATES = Coordinates(MIN_X, MAX_Y + 1)
 
 DEFAULT_SCOPE_KEY = lambda e: (e.coords.y, e.coords.x)
 
+class Animation:
+    """
+    Represents an animation composed of multiple frames, each containing entities.
+
+    :param frames: 
+        A list of lists, where each sublist represents an animation frame and contains all entities present in that frame.
+    :type frames: 
+        List[List[Entity]]
+    :param duration: 
+        The approximate duration of the entire animation in seconds, which may vary depending on hardware performance.
+    :type duration: 
+        float
+    """
+    def __init__(self, frames: List[List[Entity]], duration: float):
+        self.frames = frames
+        self.duration = duration
+
+    @classmethod
+    def from_ascii_frames(cls, frames_strings: List[List[str]], top_left: Coordinates, color, duration: float):
+        """
+        Creates a simple animation from multiple ASCII frames.
+
+        Each frame is a list of lines. Lines are stacked vertically 
+        starting at `top_left` and will go right after each other (no gaps).
+        All entities in the animation will share the same color.
+
+        :param frames_strings: 
+            List of frames, each frame is a list of ASCII strings
+        :param top_left: 
+            Coordinates of the first line in each frame
+        :param color: 
+            Color applied to all entities
+        :param duration: 
+            Duration of the animation
+        """
+        frames_entities = []
+
+        for frame_index, frame_lines in enumerate(frames_strings):
+            entities = [
+                Entity(
+                    content=line,
+                    color=color,
+                    coords=Coordinates(top_left.x, top_left.y + i)
+                )
+                for i, line in enumerate(frame_lines)
+            ]
+            frames_entities.append(entities)
+
+        return cls(frames=frames_entities, duration=duration)
+    
+    def display(self):
+        time_between_frames = self.duration / len(self.frames)
+        for frame in self.frames:
+            GameController.my_entities.update(frame)
+            GameController.refresh_screen()
+            time.sleep(time_between_frames)
+            for e in frame:
+                GameController.my_entities.remove(e) # remove all frame entities from my_entities
+        GameController.refresh_screen()
+
+BATTLE_START_ANIMATION_TOP_LEFT_COORDINATES = Coordinates(MIN_X + 30, MAX_Y - 12)
+BATTLE_START_ANIMATION = Animation.from_ascii_frames(frames_strings=[
+    [
+    "███████",
+    "██",
+    "█████",
+    "██",
+    "██"
+    ],
+
+    [
+    "███████ ██",
+    "██      ██",
+    "█████   ██",
+    "██      ██",
+    "██      ██"
+    ],
+
+    [
+    "███████ ██  ██████",
+    "██      ██ ██",
+    "█████   ██ ██   ███",
+    "██      ██ ██    ██",
+    "██      ██  ██████"
+    ],
+
+    [
+    "███████ ██  ██████  ██   ██",
+    "██      ██ ██       ██   ██",
+    "█████   ██ ██   ███ ███████",
+    "██      ██ ██    ██ ██   ██",
+    "██      ██  ██████  ██   ██"
+    ],
+
+    [
+    "███████ ██  ██████  ██   ██ ████████",
+    "██      ██ ██       ██   ██    ██",
+    "█████   ██ ██   ███ ███████    ██",
+    "██      ██ ██    ██ ██   ██    ██",
+    "██      ██  ██████  ██   ██    ██"
+    ]
+], top_left=BATTLE_START_ANIMATION_TOP_LEFT_COORDINATES, color=colors.WHITE, duration=2.5)
+
 class Requirements:
     def __init__(self, quantities: List[int], requirements: List[Callable[[Entity], bool]]):
         """
@@ -100,6 +203,15 @@ def execute_action(action_entry: ActionEntry, *entity_lists: List[Entity]) -> No
     else:
         action_entry.action()
 
+def reverse_y(coordinates: Coordinates):
+    return Coordinates(x = coordinates.x, y = MIN_Y + abs(coordinates.y - MAX_Y))
+
+def find_by_coordinates(sl, coordinates):
+    i = sl.bisect_left(Entity(content = "", coords = coordinates))
+    if i < len(sl) and sl[i].coords == coordinates:
+        return sl[i]
+    return None
+
 class GameController:
     close_game: bool = False
     player_num: int = 0
@@ -134,7 +246,6 @@ class GameController:
                     coords = (ACTION_MENU_START_COORDINATES.x + 2, ACTION_MENU_START_COORDINATES.y + 1 + len(current_action_menu)),
                     action = lambda list: (
                         list[0].upgrade_value(), # there will only be one item, as specified in entity_requirements
-                        GameController.send_public_entities(), 
                         GameController.end_turn()
                         ),
                     entity_requirements = Requirements(
@@ -151,8 +262,8 @@ class GameController:
                     action = lambda: (
                         GameController.current_action_menu_owner.cardlist.remove(GameController.current_action_menu_owner),
                         setattr(GameController.current_action_menu_owner, "help_string", "This is your fighting card"),
+                        setattr(GameController.current_action_menu_owner, "public", True),
                         GameController.fighting_card_slot.append(GameController.current_action_menu_owner),
-                        GameController.send_public_entities(),
                         GameController.end_turn()
                         ),
                     help_string = "...")
@@ -314,19 +425,43 @@ class GameController:
     @classmethod
     def receive_public_entities(cls) -> bool:
         encoded_data: bytes = recvall(s)
+        sendall_with_end(s, b"RECEIVED: " + encoded_data)
         if encoded_data == SOCKET_SHARED_ENTITIES_UPDATE:
             received_entities: List[Entity] = pickle.loads(recvall(s))
             cls.received_entities.clear() # clear previously received entities
             for entity in received_entities:
-                entity.set_coords(Coordinates(entity.coords.x, MIN_Y + abs(entity.coords.y - MAX_Y))) # reverse y coordinate of the received entity, so it will be displayed on the other player's side
+                entity.set_coords(reverse_y(entity.coords)) # reverse y coordinate of the received entity, so that it is displayed on the other player's side
                 cls.received_entities.add(entity)
             return True
+        elif encoded_data == SOCKET_BATTLE_START:
+            opponents_fighting_card_slot = find_by_coordinates(cls.received_entities, reverse_y(FIGHTING_CARD_COORDINATES)) # if SOCKET_BATTLE_START was sent we don't need to check if the cards exist, because the other player did that for us
+            cls.start_battle(my_fighting_card = cls.fighting_card_slot[0], opponents_fighting_card = opponents_fighting_card_slot[0])
         elif encoded_data == SOCKET_YOUR_TURN:
             cls.my_turn = True
             return False
-        
+    
+    @classmethod
+    def start_battle(cls, my_fighting_card: WarriorCard, opponents_fighting_card: WarriorCard) -> None:
+        BATTLE_START_ANIMATION.display()
+        if my_fighting_card > opponents_fighting_card:
+            cls.set_footer(Entity(f"Your card won the battle! {opponents_fighting_card} was enslaved", colors.NONE, coords = GameController.get_footer_start_coordinates()))
+            opponents_fighting_card.cardlist.remove(opponents_fighting_card)
+            opponents_fighting_card.help_string = ""
+            cls.main_warrior_list.append(opponents_fighting_card)
+            cls.refresh_screen()
+            time.sleep(2)
+
+    @classmethod
+    def end_turn_sequence(cls) -> None:
+        opponents_fighting_card_slot = find_by_coordinates(cls.received_entities, reverse_y(FIGHTING_CARD_COORDINATES))
+        if opponents_fighting_card_slot and len(cls.fighting_card_slot) > 0 and len(opponents_fighting_card_slot) > 0:
+            sendall_with_end(s, SOCKET_BATTLE_START)
+            cls.start_battle(my_fighting_card = cls.fighting_card_slot[0], opponents_fighting_card = opponents_fighting_card_slot[0])
+
     @classmethod
     def end_turn(cls) -> None:
+        cls.send_public_entities()
+        cls.end_turn_sequence()
         cls.my_turn = False
         sendall_with_end(s, SOCKET_YOUR_TURN)
     
@@ -357,6 +492,28 @@ class GameController:
         cls.current_action_menu_owner = cls.cursor.selected # save the entity that owns the menu
         return True
     
+    @classmethod
+    def open_detached_action_menu(cls, entries: List[ActionEntry]) -> bool:
+        """Opens an action menu detached from any entities"""
+        menu: List[Entity] = []
+
+        for entry in entries:
+            menu.append(entry)
+
+        number_of_entries = len(menu)
+
+        menu += [Entity(content = UPPER_FIELD_BORDER, color = GameController.player_color, coords = ACTION_MENU_START_COORDINATES), 
+                    Entity(content = LOWER_FIELD_BORDER, color = GameController.player_color, coords = (ACTION_MENU_START_COORDINATES.x, ACTION_MENU_START_COORDINATES.y + 1 + number_of_entries))]
+
+        for y in range(number_of_entries):
+            menu += [Entity(content = LATERAL_FIELD_BORDER_CHARACTER, color = GameController.player_color, coords = (ACTION_MENU_START_COORDINATES.x, ACTION_MENU_START_COORDINATES.y + y + 1)),
+                        Entity(content = LATERAL_FIELD_BORDER_CHARACTER, color = GameController.player_color, coords = (ACTION_MENU_START_COORDINATES.x + (GAME_FIELD_WIDTH - 1), ACTION_MENU_START_COORDINATES.y + y + 1))]
+
+        cls.current_action_menu.update(menu)
+        cls.update_footer_location()
+        cls.current_action_menu_owner = None
+        return True
+
     @classmethod
     def close_action_menu(cls) -> None:
         cls.current_action_menu.clear()
@@ -518,6 +675,12 @@ try:
     GameController.my_entities.add(GameController.fighting_card_slot)
 
     GameController.refresh_screen()
+    
+    # two following lines are after refresh_screen, so the player doesn't see their starting cards before the game actually starts
+    draw_a_card(WarriorCard, GameController.main_warrior_list, public = False)
+    GameController.main_warrior_list.append(WarriorCard(state_index=0))
+    GameController.main_warrior_list.append(WarriorCard(state_index=27))
+    GameController.main_bandage_list.append(BandageCard(state = CardState(card_type = BandageCard, level = colors.GREEN, face_value = face_values.FACE_VALUE_BANDAGE)))
 
     GameController.send_public_entities()
     GameController.receive_public_entities()
@@ -536,19 +699,15 @@ try:
         'q': on_q,
         '1': lambda: (
             draw_a_card(WarriorCard, GameController.main_warrior_list, public = True), 
-            GameController.refresh_screen(), 
-            GameController.send_public_entities(),
+            GameController.refresh_screen(),
             GameController.end_turn()
             ),
         '2': lambda: (
             draw_a_card(BandageCard, GameController.main_bandage_list, public = True),
-            GameController.refresh_screen(), 
-            GameController.send_public_entities(), 
+            GameController.refresh_screen(),
             GameController.end_turn()
             )
     }
-
-    GameController.main_bandage_list.append(BandageCard(state = CardState(card_type = BandageCard, level = colors.GREEN, face_value = face_values.FACE_VALUE_BANDAGE)))
 
     while not GameController.close_game:
         if GameController.my_turn:
