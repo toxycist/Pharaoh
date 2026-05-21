@@ -1,3 +1,5 @@
+a command-line card game based in ancient egypt 😛 wip
+
 # Installing dependencies
 
 > [!IMPORTANT]  
