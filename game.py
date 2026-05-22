@@ -260,10 +260,9 @@ class GameController:
         put_out_to_battle = ActionEntry("Put this card out to battle", 
                     coords = (ACTION_MENU_START_COORDINATES.x + 2, ACTION_MENU_START_COORDINATES.y + 1 + len(current_action_menu)),
                     action = lambda: (
-                        GameController.current_action_menu_owner.cardlist.remove(GameController.current_action_menu_owner),
+                        GameController.current_action_menu_owner.move_to_cardlist(GameController.fighting_card_slot),
                         setattr(GameController.current_action_menu_owner, "help_string", "This is your fighting card"),
                         setattr(GameController.current_action_menu_owner, "public", True),
-                        GameController.fighting_card_slot.append(GameController.current_action_menu_owner),
                         GameController.end_turn()
                         ),
                     help_string = "...")
@@ -445,11 +444,20 @@ class GameController:
         BATTLE_START_ANIMATION.display()
         if my_fighting_card > opponents_fighting_card:
             cls.set_footer(Entity(f"Your card won the battle! {opponents_fighting_card} was enslaved", colors.NONE, coords = GameController.get_footer_start_coordinates()))
-            opponents_fighting_card.cardlist.remove(opponents_fighting_card)
-            opponents_fighting_card.help_string = ""
-            cls.main_warrior_list.append(opponents_fighting_card)
             cls.refresh_screen()
-            time.sleep(2)
+            my_fighting_card.move_to_cardlist(cls.main_warrior_list, gcfcs=GameController.fighting_card_slot)
+            my_fighting_card.public = False
+            my_fighting_card.help_string = ""
+            opponents_fighting_card.move_to_cardlist(cls.main_warrior_list)
+            opponents_fighting_card.public = False
+            opponents_fighting_card.help_string = ""
+            cls.send_public_entities()
+        elif my_fighting_card < opponents_fighting_card:
+            cls.set_footer(Entity(f"Your card lost the battle! {my_fighting_card} was enslaved", colors.NONE, coords = GameController.get_footer_start_coordinates()))
+            cls.refresh_screen()
+            my_fighting_card.vanish()
+        
+        time.sleep(2)
 
     @classmethod
     def end_turn_sequence(cls) -> None:

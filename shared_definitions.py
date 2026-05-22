@@ -1,4 +1,5 @@
 import pickle
+import copy
 import socket
 import threading
 import select
@@ -286,6 +287,11 @@ class Card(Entity):
     def __hash__(self) -> int:
         return hash((type(self), self.state_index))
     
+    def move_to_cardlist(self, new_cardlist: CardList, gcfcs = None):
+        if self.cardlist:
+            self.cardlist.remove(self)
+        new_cardlist.append(self)
+    
     def upgrade_level(self, by: int = 1) -> None:
         index_iterator = self.state_index
 
@@ -304,6 +310,10 @@ class Card(Entity):
     def upgrade_value(self, by: int = 1) -> None:
         self.state_index = min(self.state_index + by, type(self).LAST_STATE_INDEX)
         self.state = type(self).STATES[self.state_index]
+    
+    def vanish(self) -> None:
+        self.cardlist.remove(self)
+        del self
 
 #TODO: #2
 
@@ -319,7 +329,6 @@ class BuildingCard(Card):
     TYPE_NAME: str = "Buildings"
 
     def __init__(self, building_type: str, level: str = colors.GREEN, coords: Coordinates = None, public: bool = True, help_string: str = "") -> None:
-        #TODO: fix docstring
         try:
             state = next(state for state in type(self).STATES if state.level == level and state.face_value == building_type)
         except StopIteration:
@@ -374,13 +383,17 @@ class CardList(Entity):
         return remove_color_codes("".join(map(str, self.__cards[start:end])))
     
     def get_public_slice(self) -> 'CardList':
-        public_cards: List[Card] = [card for card in self.__cards if card.public]
-        return CardList(coords = self.coords, card_type = self.card_type, cards = public_cards, empty_label = self.empty_label, selectable = self.selectable, public = True)
+        return CardList(coords = self.coords, 
+                        card_type = self.card_type, 
+                        cards = [copy.copy(card) for card in self.__cards if card.public], 
+                        empty_label = self.empty_label, 
+                        selectable = self.selectable, 
+                        public = True)
 
     def remove(self, card: Card) -> None:
-        index = self.__cards.index(card)
+        index = index_by_identity(self.__cards, card)
+        del self.__cards[index]
         card.cardlist = None
-        self.__cards.remove(card)
         self.update_card_coordinates(begin = index, end = len(self))
     
     def append(self, card: Card) -> None:
