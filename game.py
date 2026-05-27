@@ -1,7 +1,8 @@
 from os import system, name as _os_name
 import random
-from shared_definitions import *
+from enum import Enum, auto
 from types import SimpleNamespace
+from shared_definitions import *
 import sys
 import time
 
@@ -41,6 +42,16 @@ class escape_sequences:
         ARROW_LEFT = "\x1b[D"
         ARROW_RIGHT = "\x1b[C"
         CTRL_C = "\x03"
+
+def recvall_from_server(s: socket.socket):
+    stripped_data = recvall(s)
+    if stripped_data in socket_messages.all:
+        sendall_with_end(s, b"RECEIVED: " + stripped_data)
+    
+    if stripped_data == socket_messages.SOCKET_TERMINATION_REQUEST:
+        raise TerminationRequest
+    
+    return stripped_data
 
 def clear_screen() -> None:
     system('cls' if _os_name == 'nt' else 'clear')
@@ -192,7 +203,7 @@ class Requirements:
         self.requirements: List[Callable[[Entity], bool]] = requirements
 
 class ActionEntry(Entity):
-    def __init__(self, content: str, action: Callable, coords: Coordinates, help_string: str = "", entity_requirements: Requirements = None, color = colors.NONE, selectable = True, public = False):
+    def __init__(self, content: str, action: Callable, coords: Coordinates = None, help_string: str = "", entity_requirements: Requirements = None, color = colors.NONE, selectable = True, public = False):
         super().__init__(content, color, coords, selectable, public, help_string)
         self.action = action
         self.entity_requirements = entity_requirements
@@ -202,6 +213,9 @@ def execute_action(action_entry: ActionEntry, *entity_lists: List[Entity]) -> No
         action_entry.action(*entity_lists)
     else:
         action_entry.action()
+
+class action_menu_overrides(Enum):
+    BATTLE_LOST = 0
 
 def reverse_y(coordinates: Coordinates):
     return Coordinates(x = coordinates.x, y = MIN_Y + abs(coordinates.y - MAX_Y))
@@ -242,10 +256,10 @@ class GameController:
 
     controls: Dict[str, Callable] = {}
     action_entries: SimpleNamespace = SimpleNamespace(
-        upgrade_value_one_card = ActionEntry("Upgrade the value of a certain card", 
-                    coords = (ACTION_MENU_START_COORDINATES.x + 2, ACTION_MENU_START_COORDINATES.y + 1 + len(current_action_menu)),
-                    action = lambda list: (
-                        list[0].upgrade_value(), # there will only be one item, as specified in entity_requirements
+        upgrade_value_one_card = ActionEntry("Upgrade the value of a certain card",
+                    action = lambda l: (
+                        l[0].upgrade_value(), # there will only be one item, as specified in entity_requirements
+                        GameController.current_action_menu_owner.vanish(),
                         GameController.end_turn()
                         ),
                     entity_requirements = Requirements(
@@ -257,15 +271,32 @@ class GameController:
                         ]
                     ),
                     help_string = "Select 1 card whose value can be upgraded."),
-        put_out_to_battle = ActionEntry("Put this card out to battle", 
-                    coords = (ACTION_MENU_START_COORDINATES.x + 2, ACTION_MENU_START_COORDINATES.y + 1 + len(current_action_menu)),
+        put_out_to_battle = ActionEntry("Put this card out to battle",
                     action = lambda: (
                         GameController.current_action_menu_owner.move_to_cardlist(GameController.fighting_card_slot),
                         setattr(GameController.current_action_menu_owner, "help_string", "This is your fighting card"),
                         setattr(GameController.current_action_menu_owner, "public", True),
                         GameController.end_turn()
                         ),
-                    help_string = "...")
+                    help_string = "..."),
+        heal_defeated_card = ActionEntry("Heal the defeated card",
+                        action = lambda l: (
+                            l[0].vanish()
+                        ),
+                        entity_requirements = Requirements(
+                            quantities = [1],
+                            requirements = [
+                                lambda e: {
+                                    hasattr(e, "can_heal") and e.can_heal == True,
+                                    sendall_with_end(s, socket_messages.SOCKET_CARD_HEALED)
+                                }
+                            ]
+                        ), help_string = "Select 1 card that can heal the defeated card."),
+        pass_entry = ActionEntry("Pass",
+                                 action = lambda: (
+                                    sendall_with_end(s, socket_messages.SOCKET_CARD_HEALED)
+                                 ),
+                                 help_string = "..."),
     )
 
     def __new__(cls):
@@ -408,62 +439,73 @@ class GameController:
 
     @classmethod
     def send_public_entities(cls) -> None:
-        ready_to_read, _, _ = select.select([s], [], [], 0) # if the server has something to say at this point - it's an error
-        if ready_to_read:
-            recvall(s) # read the error
-
         public_entities: List[Entity] = []
         for public_entity in [e for e in cls.my_entities if e.public]:
             if isinstance(public_entity, CardList):
                 public_entities.append(public_entity.get_public_slice())
             else:
                 public_entities.append(public_entity)
-        sendall_with_end(s, SOCKET_SHARED_ENTITIES_UPDATE)
+        sendall_with_end(s, socket_messages.SOCKET_SHARED_ENTITIES_UPDATE)
         sendall_with_end(s, pickle.dumps(public_entities))
 
     @classmethod
     def receive_public_entities(cls) -> bool:
-        encoded_data: bytes = recvall(s)
-        sendall_with_end(s, b"RECEIVED: " + encoded_data)
-        if encoded_data == SOCKET_SHARED_ENTITIES_UPDATE:
-            received_entities: List[Entity] = pickle.loads(recvall(s))
+        encoded_data: bytes = recvall_from_server(s)
+        if encoded_data == socket_messages.SOCKET_SHARED_ENTITIES_UPDATE:
+            received_entities: List[Entity] = pickle.loads(recvall_from_server(s))
             cls.received_entities.clear() # clear previously received entities
             for entity in received_entities:
                 entity.set_coords(reverse_y(entity.coords)) # reverse y coordinate of the received entity, so that it is displayed on the other player's side
                 cls.received_entities.add(entity)
             return True
-        elif encoded_data == SOCKET_BATTLE_START:
+        elif encoded_data == socket_messages.SOCKET_BATTLE_START:
             opponents_fighting_card_slot = find_by_coordinates(cls.received_entities, reverse_y(FIGHTING_CARD_COORDINATES)) # if SOCKET_BATTLE_START was sent we don't need to check if the cards exist, because the other player did that for us
             cls.start_battle(my_fighting_card = cls.fighting_card_slot[0], opponents_fighting_card = opponents_fighting_card_slot[0])
-        elif encoded_data == SOCKET_YOUR_TURN:
+        elif encoded_data == socket_messages.SOCKET_YOUR_TURN:
             cls.my_turn = True
             return False
     
     @classmethod
-    def start_battle(cls, my_fighting_card: WarriorCard, opponents_fighting_card: WarriorCard) -> None:
-        BATTLE_START_ANIMATION.display()
-        if my_fighting_card > opponents_fighting_card:
-            cls.set_footer(Entity(f"Your card won the battle! {opponents_fighting_card} was enslaved", colors.NONE, coords = GameController.get_footer_start_coordinates()))
-            cls.refresh_screen()
-            my_fighting_card.move_to_cardlist(cls.main_warrior_list, gcfcs=GameController.fighting_card_slot)
-            my_fighting_card.public = False
-            my_fighting_card.help_string = ""
-            opponents_fighting_card.move_to_cardlist(cls.main_warrior_list)
-            opponents_fighting_card.public = False
-            opponents_fighting_card.help_string = ""
-            cls.send_public_entities()
-        elif my_fighting_card < opponents_fighting_card:
-            cls.set_footer(Entity(f"Your card lost the battle! {my_fighting_card} was enslaved", colors.NONE, coords = GameController.get_footer_start_coordinates()))
-            cls.refresh_screen()
-            my_fighting_card.vanish()
-        
-        time.sleep(2)
+    def start_battle(cls, my_fighting_card: WarriorCard, opponents_fighting_card: WarriorCard) -> int:
+        battle_result = None
+
+        while not battle_result:
+            BATTLE_START_ANIMATION.display()
+            if my_fighting_card > opponents_fighting_card:
+                cls.set_footer(Entity(f"Your card won the battle! {opponents_fighting_card} is wounded", colors.NONE, coords = GameController.get_footer_start_coordinates()))
+                cls.refresh_screen()
+                is_healed: bytes = recvall_from_server(s)
+                match is_healed:
+                    case socket_messages.SOCKET_CARD_HEALED:
+                        continue
+                    case socket_messages.SOCKET_CARD_ABANDONED:
+                        battle_result = 1
+                    case _:
+                        raise ValueError(f"Unexpected server response: {is_healed}, expected {(socket_messages.SOCKET_CARD_HEALED, socket_messages.SOCKET_CARD_ABANDONED)}") #TODO: complete the card healing logic
+                
+                my_fighting_card.move_to_cardlist(cls.main_warrior_list)
+                my_fighting_card.public = False
+                my_fighting_card.help_string = ""
+                opponents_fighting_card.move_to_cardlist(cls.main_warrior_list)
+                opponents_fighting_card.public = False
+                opponents_fighting_card.help_string = ""
+                cls.send_public_entities()
+            elif my_fighting_card < opponents_fighting_card:
+                cls.set_footer(Entity(f"Your card lost the battle! {my_fighting_card} is wounded", colors.NONE, coords = GameController.get_footer_start_coordinates()))
+                cls.open_action_menu(owner = my_fighting_card, override = action_menu_overrides.BATTLE_LOST)
+                cls.cursor.scope_forward(GameController.current_action_menu)
+                while True:
+                    getkey()
+                
+                cls.refresh_screen()
+            
+        return battle_result
 
     @classmethod
     def end_turn_sequence(cls) -> None:
         opponents_fighting_card_slot = find_by_coordinates(cls.received_entities, reverse_y(FIGHTING_CARD_COORDINATES))
         if opponents_fighting_card_slot and len(cls.fighting_card_slot) > 0 and len(opponents_fighting_card_slot) > 0:
-            sendall_with_end(s, SOCKET_BATTLE_START)
+            sendall_with_end(s, socket_messages.SOCKET_BATTLE_START)
             cls.start_battle(my_fighting_card = cls.fighting_card_slot[0], opponents_fighting_card = opponents_fighting_card_slot[0])
 
     @classmethod
@@ -471,16 +513,21 @@ class GameController:
         cls.send_public_entities()
         cls.end_turn_sequence()
         cls.my_turn = False
-        sendall_with_end(s, SOCKET_YOUR_TURN)
+        sendall_with_end(s, socket_messages.SOCKET_YOUR_TURN)
     
     @classmethod
-    def open_action_menu(cls, entity: Entity) -> bool: # True if the menu was opened, False otherwise
+    def open_action_menu(cls, owner: Entity, override: str = None) -> bool: # True if the menu was opened, False otherwise
         menu: List[Entity] = []
 
-        if isinstance(entity, BandageCard) and entity.content == face_values.FACE_VALUE_BANDAGE:
-            menu.append(GameController.action_entries.upgrade_value_one_card)
-        if isinstance(entity, WarriorCard) and not isinstance(entity, GuardCard) and len(GameController.fighting_card_slot) == 0:
-            menu.append(GameController.action_entries.put_out_to_battle)
+        if override:
+            match override:
+                case action_menu_overrides.BATTLE_LOST:
+                    menu.extend([GameController.action_entries.heal_defeated_card, GameController.action_entries.pass_entry])
+        else:
+            if isinstance(owner, BandageCard) and owner.content == face_values.FACE_VALUE_BANDAGE:
+                menu.append(GameController.action_entries.upgrade_value_one_card)
+            if isinstance(owner, WarriorCard) and not isinstance(owner, GuardCard) and len(GameController.fighting_card_slot) == 0:
+                menu.append(GameController.action_entries.put_out_to_battle)
             
         if not menu:
             cls.set_footer(Entity("No action can be performed by this entity", colors.NONE, coords = ACTION_MENU_START_COORDINATES))
@@ -488,27 +535,8 @@ class GameController:
 
         number_of_entries = len(menu)
 
-        menu += [Entity(content = UPPER_FIELD_BORDER, color = GameController.player_color, coords = ACTION_MENU_START_COORDINATES), 
-                    Entity(content = LOWER_FIELD_BORDER, color = GameController.player_color, coords = (ACTION_MENU_START_COORDINATES.x, ACTION_MENU_START_COORDINATES.y + 1 + number_of_entries))]
-
-        for y in range(number_of_entries):
-            menu += [Entity(content = LATERAL_FIELD_BORDER_CHARACTER, color = GameController.player_color, coords = (ACTION_MENU_START_COORDINATES.x, ACTION_MENU_START_COORDINATES.y + y + 1)),
-                        Entity(content = LATERAL_FIELD_BORDER_CHARACTER, color = GameController.player_color, coords = (ACTION_MENU_START_COORDINATES.x + (GAME_FIELD_WIDTH - 1), ACTION_MENU_START_COORDINATES.y + y + 1))]
-
-        cls.current_action_menu.update(menu)
-        cls.update_footer_location()
-        cls.current_action_menu_owner = cls.cursor.selected # save the entity that owns the menu
-        return True
-    
-    @classmethod
-    def open_detached_action_menu(cls, entries: List[ActionEntry]) -> bool:
-        """Opens an action menu detached from any entities"""
-        menu: List[Entity] = []
-
-        for entry in entries:
-            menu.append(entry)
-
-        number_of_entries = len(menu)
+        for i, entry in enumerate(menu):
+            entry.coords = Coordinates(ACTION_MENU_START_COORDINATES.x + 2, ACTION_MENU_START_COORDINATES.y + 1 + i)
 
         menu += [Entity(content = UPPER_FIELD_BORDER, color = GameController.player_color, coords = ACTION_MENU_START_COORDINATES), 
                     Entity(content = LOWER_FIELD_BORDER, color = GameController.player_color, coords = (ACTION_MENU_START_COORDINATES.x, ACTION_MENU_START_COORDINATES.y + 1 + number_of_entries))]
@@ -519,7 +547,7 @@ class GameController:
 
         cls.current_action_menu.update(menu)
         cls.update_footer_location()
-        cls.current_action_menu_owner = None
+        cls.current_action_menu_owner = owner # save the entity that owns the menu
         return True
 
     @classmethod
@@ -601,6 +629,17 @@ def draw_a_card(source: type[Card] | List[Card], to_cardlist: CardList, public: 
     to_cardlist.append(drawn_card)
 #####
 
+def getkey() -> None:
+    key = getch()
+    if key == escape_sequences.ESCAPE:
+        for i in range(escape_sequences.ESCAPE_SEQUENCE_LENGTH - 1):
+            key += getch()
+
+    if key not in GameController.controls:
+        pass
+    else:
+        GameController.controls[key]()
+
 def on_spacebar() -> None:
     if GameController.selection_mode:
         GameController.get_selection()
@@ -648,15 +687,15 @@ s: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
 try:
     s.connect((HOST, PORT))
-    sendall_with_end(s, SOCKET_CONNECTION_ESTABLISHED)
-    data: bytes = recvall(s) # receive SOCKET_CONNECTION_ESTABLISHED or SOCKET_LOBBY_FULL
-    if data == SOCKET_LOBBY_FULL:
+    sendall_with_end(s, socket_messages.SOCKET_CONNECTION_ESTABLISHED)
+    data: bytes = recvall_from_server(s) # receive SOCKET_CONNECTION_ESTABLISHED or SOCKET_LOBBY_FULL
+    if data == socket_messages.SOCKET_LOBBY_FULL:
         clear_screen()
         print("The game has already started, please wait until it is finished. Press spacebar to exit.")
         GameController.close_game = True
         while ' ' != getch(): pass
         sys.exit()
-    data = recvall(s) # receive player number
+    data = recvall_from_server(s) # receive player number
 
     GameController.player_num = int.from_bytes(data)
     GameController.player_color = PLAYER_COLORS[GameController.player_num]
@@ -728,15 +767,7 @@ try:
             GameController.frozen_footer = False
 
             while GameController.my_turn:
-                key = getch()
-                if key == escape_sequences.ESCAPE:
-                    for i in range(escape_sequences.ESCAPE_SEQUENCE_LENGTH - 1):
-                        key += getch()
-
-                if key not in GameController.controls:
-                    continue
-                else:
-                    GameController.controls[key]()
+                getkey()
         else:
             while len(GameController.cursor.scope_stack) > 1: # move cursor back to top
                 GameController.cursor.scope_backward()
@@ -762,11 +793,18 @@ except (ConnectionRefusedError, TimeoutError, ConnectionResetError): # the error
     close_game_on_space()
 
 except (BrokenPipeError, ConnectionError): # the error occurs while trying to send or read data from the server
-    clear_screen()
-    print("Server has disconnected. Press spacebar to exit.")
-    close_game_on_space()
+    try:
+        ready_to_read, _, _ = select.select([s], [], [], 0) # if the server has something to say, it could be a termination request
+        while ready_to_read:
+            recvall_from_server(s) # read everything
+    except ConnectionError: # recvall raises ConnectionError if no data arrives, which means, that the server itself disconnected
+        s.close()
+        clear_screen()
+        print("Server has disconnected. Press spacebar to exit.")
+        close_game_on_space()
     
 except TerminationRequest: # received a termination request from the server
+    s.close()
     clear_screen()
     print("Your opponent has disconnected, unable to continue. Press spacebar to exit.")
     close_game_on_space()

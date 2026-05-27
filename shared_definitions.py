@@ -124,6 +124,9 @@ class Entity:
     
     def set_coords(self, new_coords: Coordinates) -> None:
         self.coords = new_coords
+    
+    def vanish():
+        raise NotImplementedError
 
 class Cursor(Entity):
     # shift_to_free_space_getter should be a function that returns a shift relative to the Entity, where the cursor can be positioned so that it doesn't overlap with other entities
@@ -272,6 +275,11 @@ class Card(Entity):
             public = public,
             help_string = help_string
         )
+
+        self.__post_init()
+
+    def __post_init(self): # useful for subclasses
+        pass
     
     @property
     def color(self) -> str:
@@ -287,7 +295,7 @@ class Card(Entity):
     def __hash__(self) -> int:
         return hash((type(self), self.state_index))
     
-    def move_to_cardlist(self, new_cardlist: CardList, gcfcs = None):
+    def move_to_cardlist(self, new_cardlist: CardList):
         if self.cardlist:
             self.cardlist.remove(self)
         new_cardlist.append(self)
@@ -321,6 +329,10 @@ class BandageCard(Card):
     STATES: List[CardState] = [CardState(level = level, face_value = face_value, pos_in_level = BANDAGE_FACE_VALUES.index(face_value)) for level in MAIN_COLORS for face_value in BANDAGE_FACE_VALUES]
     TYPE_NAME: str = "Bandages"
     SUPPORTS_VALUE_UPGRADES = False
+
+    def __post_init(self):
+        if self.content in [face_values.FACE_VALUE_BANDAGE, face_values.LEVEL_BANDAGE]:
+            self.can_heal = True
 
 class BuildingCard(Card):
     STATES: List[CardState] = ([CardState(level = level, face_value = face_value, pos_in_level = BUILDING_FACE_VALUES.index(face_value)) for level in MAIN_COLORS for face_value in BUILDING_FACE_VALUES] + 
@@ -464,28 +476,39 @@ class CardList(Entity):
             return False
         return any((c == card) for c in self.__cards)
 
-SOCKET_END_MSG: bytes = b"<END>"
-SOCKET_CONNECTION_ESTABLISHED: bytes = b"CONNECTION ESTABLISHED"
-SOCKET_LOBBY_FULL: bytes = b"LOBBY FULL"
-SOCKET_SHARED_ENTITIES_UPDATE: bytes = b"SHARED ENTITIES UPDATE"
-SOCKET_YOUR_TURN: bytes = b"YOUR TURN"
-SOCKET_TERMINATION_REQUEST = b"TERMINATION REQUEST"
-SOCKET_BATTLE_START = b"BATTLE START"
+class socket_messages:
+    SOCKET_END_MSG: bytes = b"<END>"
+    SOCKET_CONNECTION_ESTABLISHED: bytes = b"CONNECTION ESTABLISHED"
+    SOCKET_LOBBY_FULL: bytes = b"LOBBY FULL"
+    SOCKET_SHARED_ENTITIES_UPDATE: bytes = b"SHARED ENTITIES UPDATE"
+    SOCKET_YOUR_TURN: bytes = b"YOUR TURN"
+    SOCKET_TERMINATION_REQUEST = b"TERMINATION REQUEST"
+    SOCKET_BATTLE_START = b"BATTLE START"
+    SOCKET_CARD_HEALED = b"CARD HEALED"
+    SOCKET_CARD_ABANDONED = b"CARD ABANDONED"
+
+    all = (SOCKET_CONNECTION_ESTABLISHED,
+                SOCKET_LOBBY_FULL,
+                SOCKET_SHARED_ENTITIES_UPDATE,
+                SOCKET_YOUR_TURN,
+                SOCKET_TERMINATION_REQUEST,
+                SOCKET_BATTLE_START,
+                SOCKET_CARD_HEALED,
+                SOCKET_CARD_ABANDONED)
 
 class TerminationRequest(Exception):
     pass
 
 def recvall(conn: socket.socket) -> bytes:
     data: bytes = b''
-    while SOCKET_END_MSG not in data:
+    while socket_messages.SOCKET_END_MSG not in data:
         more: bytes = conn.recv(1)
         if not more:
             raise ConnectionError
         data += more
     stripped_data = data[:-5]
-    if stripped_data == SOCKET_TERMINATION_REQUEST:
-        raise TerminationRequest
+
     return stripped_data
 
 def sendall_with_end(s: socket.socket, message: bytes) -> None:
-    s.sendall(message + SOCKET_END_MSG)
+    s.sendall(message + socket_messages.SOCKET_END_MSG)
