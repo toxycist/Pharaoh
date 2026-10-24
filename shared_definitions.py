@@ -276,11 +276,6 @@ class Card(Entity):
             help_string = help_string
         )
 
-        self.__post_init()
-
-    def __post_init(self): # useful for subclasses
-        pass
-    
     @property
     def color(self) -> str:
         return self.state.level
@@ -318,6 +313,10 @@ class Card(Entity):
     def upgrade_value(self, by: int = 1) -> None:
         self.state_index = min(self.state_index + by, type(self).LAST_STATE_INDEX)
         self.state = type(self).STATES[self.state_index]
+
+    def take_damage(self, dmg: int) -> None:
+        damage = min(dmg, self.state.pos_in_level)
+        self.upgrade_value(-damage)
     
     def vanish(self) -> None:
         self.cardlist.remove(self)
@@ -330,7 +329,8 @@ class BandageCard(Card):
     TYPE_NAME: str = "Bandages"
     SUPPORTS_VALUE_UPGRADES = False
 
-    def __post_init(self):
+    def __init__(self, state: CardState, coords: Coordinates = None, public: bool = False, help_string: str = "") -> None:
+        super().__init__(state = state, coords=coords, public=public, help_string=help_string)
         if self.content in [face_values.FACE_VALUE_BANDAGE, face_values.LEVEL_BANDAGE]:
             self.can_heal = True
 

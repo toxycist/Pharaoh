@@ -203,10 +203,11 @@ class Requirements:
         self.requirements: List[Callable[[Entity], bool]] = requirements
 
 class ActionEntry(Entity):
-    def __init__(self, content: str, action: Callable, coords: Coordinates = None, help_string: str = "", entity_requirements: Requirements = None, color = colors.NONE, selectable = True, public = False):
+    def __init__(self, content: str, action: Callable, turn_ending: bool, coords: Coordinates = None, help_string: str = "", entity_requirements: Requirements = None, color = colors.NONE, selectable = True, public = False):
         super().__init__(content, color, coords, selectable, public, help_string)
         self.action = action
         self.entity_requirements = entity_requirements
+        self.turn_ending = turn_ending
 
 def execute_action(action_entry: ActionEntry, *entity_lists: List[Entity]) -> None:
     if entity_lists:
@@ -239,7 +240,6 @@ class GameController:
     main_building_list: CardList = CardList(card_type = BuildingCard, coords = MAIN_BUILDING_LIST_COORDINATES)
     guard_list: List[GuardCard] = [GuardCard(coords = GUARD_COORDINATES_LIST[0]), GuardCard(coords = GUARD_COORDINATES_LIST[1])]
     footer: SortedList[Entity] = SortedList(key = DEFAULT_SCOPE_KEY)
-    frozen_footer: bool = True
     cursor: Cursor = None # cursor is set outside of class body, because it needs a callback to a class method get_shift_to_free_space
 
     selection_mode: bool = False
@@ -250,8 +250,11 @@ class GameController:
     selection_mode_selected_entities: List[List[Entity]] = []
 
     current_action_menu: SortedList[Entity] = SortedList(key = DEFAULT_SCOPE_KEY)
+    is_action_menu_overriden: bool = False
     current_action_menu_owner: Entity = None
     
+    battle_result: int = 0
+
     second_player_joined: bool = False
 
     controls: Dict[str, Callable] = {}
@@ -259,8 +262,7 @@ class GameController:
         upgrade_value_one_card = ActionEntry("Upgrade the value of a certain card",
                     action = lambda l: (
                         l[0].upgrade_value(), # there will only be one item, as specified in entity_requirements
-                        GameController.current_action_menu_owner.vanish(),
-                        GameController.end_turn()
+                        GameController.current_action_menu_owner.vanish()
                         ),
                     entity_requirements = Requirements(
                         quantities = [1],
@@ -270,32 +272,38 @@ class GameController:
                             )
                         ]
                     ),
+                    turn_ending = True,
                     help_string = "Select 1 card whose value can be upgraded."),
         put_out_to_battle = ActionEntry("Put this card out to battle",
                     action = lambda: (
                         GameController.current_action_menu_owner.move_to_cardlist(GameController.fighting_card_slot),
                         setattr(GameController.current_action_menu_owner, "help_string", "This is your fighting card"),
-                        setattr(GameController.current_action_menu_owner, "public", True),
-                        GameController.end_turn()
+                        setattr(GameController.current_action_menu_owner, "public", True)
                         ),
+                    turn_ending = True,
                     help_string = "..."),
         heal_defeated_card = ActionEntry("Heal the defeated card",
                         action = lambda l: (
-                            l[0].vanish()
+                            l[0].vanish(),
+                            sendall_with_end(s, socket_messages.SOCKET_CARD_HEALED),
                         ),
                         entity_requirements = Requirements(
                             quantities = [1],
                             requirements = [
-                                lambda e: {
-                                    hasattr(e, "can_heal") and e.can_heal == True,
-                                    sendall_with_end(s, socket_messages.SOCKET_CARD_HEALED)
-                                }
+                                lambda e: (
+                                    hasattr(e, "can_heal") and e.can_heal == True
+                                )
                             ]
-                        ), help_string = "Select 1 card that can heal the defeated card."),
+                        ),
+                        turn_ending = False,
+                        help_string = "Select 1 card that can heal the defeated card"),
         pass_entry = ActionEntry("Pass",
                                  action = lambda: (
-                                    sendall_with_end(s, socket_messages.SOCKET_CARD_HEALED)
+                                    sendall_with_end(s, socket_messages.SOCKET_CARD_ABANDONED),
+                                    GameController.current_action_menu_owner.vanish(),
+                                    setattr(GameController, "battle_result", -1),
                                  ),
+                                 turn_ending = False,
                                  help_string = "..."),
     )
 
@@ -318,8 +326,6 @@ class GameController:
     @classmethod
     def enable_selection_mode(cls, action: Callable, quantities: List[int], requirements: List[Callable]) -> None:
         cls.selection_mode = True
-        cls.frozen_footer = True
-        cls.footer.add(Entity(content = f"Selected: ", color = colors.NONE, coords = Coordinates(cls.footer[-1].coords.x, cls.footer[-1].coords.y + 1)))
         cls.selection_mode_action = action
         cls.selection_mode_quantities = quantities.copy() # quantities is the only list here, that comes directly from the Requirements object in the ActionEntry, so we need to ensure it stays unchanged there
         for quantity, check in zip(cls.selection_mode_quantities, requirements):
@@ -328,16 +334,16 @@ class GameController:
                 cls.disable_selection_mode()
                 return False
             cls.selection_mode_scopes.append(new_scope)
+        cls.footer.add(Entity(content = f"Selected: ", color = colors.NONE, coords = Coordinates(cls.footer[-1].coords.x, cls.footer[-1].coords.y + 1)))
         cls.cursor.scope_forward(cls.selection_mode_scopes[0])
 
         return True
 
     @classmethod
     def disable_selection_mode(cls) -> None:
-        cls.my_entities.discard(cls.cursor) # remove the second cursor from my_entities (refer to the comment in "enable_selection_mode")
+        cls.my_entities.discard(cls.cursor)
 
         cls.selection_mode = False
-        cls.frozen_footer = False
         cls.selection_mode_action = None
         cls.selection_mode_quantities.clear()
         cls.selection_mode_scopes.clear()
@@ -346,6 +352,7 @@ class GameController:
 
     @classmethod
     def get_selection(cls) -> None:
+        is_action_turn_ending = cls.selection_mode_action.turn_ending
         i = cls.selection_mode_current_scope_index
         selected_entities = cls.selection_mode_selected_entities
         quantities = cls.selection_mode_quantities
@@ -363,7 +370,11 @@ class GameController:
             if i >= len(cls.selection_mode_scopes):
                 execute_action(cls.selection_mode_action, *selected_entities)
                 cls.disable_selection_mode()
+                cls.cursor.scope_backward()
+                cls.close_action_menu()
                 cls.refresh_screen()
+                if is_action_turn_ending:
+                    cls.end_turn()
                 return
             else:
                 cls.cursor.scope_forward(cls.selection_mode_scopes[i])
@@ -405,13 +416,33 @@ class GameController:
     def display_game_field(cls, game_field_string: str) -> None:
         print(game_field_string, end="")
 
+    @overload
     @classmethod
-    def set_footer(cls, entity: Entity | List[Entity]) -> SortedList[Entity]:
+    def set_footer(cls, entity: Entity | List[Entity]) -> SortedList[Entity]: ...
+
+    @overload
+    @classmethod
+    def set_footer(cls, string: str) -> SortedList[Entity]: ...
+
+    @classmethod
+    def set_footer(cls, entity_or_string: Entity | List[Entity] | str) -> SortedList[Entity]:
         cls.footer.clear()
-        if isinstance(entity, Iterable):
-            cls.footer.update(entity)
-        else:
-            cls.footer.add(entity)
+        if isinstance(entity_or_string, str):
+            cls.footer.add(Entity(entity_or_string, colors.NONE, coords = GameController.get_footer_start_coordinates()))
+        elif isinstance(entity_or_string, Iterable):
+            cls.footer.update(entity_or_string)
+        elif isinstance(entity_or_string, Entity):
+            cls.footer.add(entity_or_string)
+        return cls.footer
+    
+    @classmethod
+    def footer_message(cls, entity_or_string: Entity | List[Entity] | str, duration: int = 2) -> SortedList[Entity]:
+        old_footer = list(cls.footer)
+        cls.set_footer(entity_or_string)
+        cls.refresh_screen()
+        time.sleep(duration)
+        cls.set_footer(old_footer)
+        cls.refresh_screen()
     
     @classmethod
     def get_shift_to_free_space(cls, entity: Entity) -> Tuple[int, int]:
@@ -449,7 +480,7 @@ class GameController:
         sendall_with_end(s, pickle.dumps(public_entities))
 
     @classmethod
-    def receive_public_entities(cls) -> bool:
+    def receive_messages(cls) -> bool:
         encoded_data: bytes = recvall_from_server(s)
         if encoded_data == socket_messages.SOCKET_SHARED_ENTITIES_UPDATE:
             received_entities: List[Entity] = pickle.loads(recvall_from_server(s))
@@ -467,21 +498,26 @@ class GameController:
     
     @classmethod
     def start_battle(cls, my_fighting_card: WarriorCard, opponents_fighting_card: WarriorCard) -> int:
-        battle_result = None
-
-        while not battle_result:
+        GameController.battle_result = 0
+        while not GameController.battle_result:
+            cls.set_footer("The battle has started!")
             BATTLE_START_ANIMATION.display()
             if my_fighting_card > opponents_fighting_card:
-                cls.set_footer(Entity(f"Your card won the battle! {opponents_fighting_card} is wounded", colors.NONE, coords = GameController.get_footer_start_coordinates()))
+                cls.footer_message(f"Your card won the battle! {opponents_fighting_card} is wounded")
+                cls.set_footer(f"Waiting for the opponent's decision regarding {opponents_fighting_card}...")
                 cls.refresh_screen()
                 is_healed: bytes = recvall_from_server(s)
                 match is_healed:
                     case socket_messages.SOCKET_CARD_HEALED:
+                        damage = WARRIOR_FACE_VALUES.index(opponents_fighting_card.content) + 1
+                        cls.footer_message(f"{opponents_fighting_card} was healed. {my_fighting_card} takes {damage} damage")
+                        my_fighting_card.take_damage(damage)
                         continue
                     case socket_messages.SOCKET_CARD_ABANDONED:
-                        battle_result = 1
+                        GameController.battle_result = 1
+                        cls.footer_message(f"{opponents_fighting_card} was abandoned. It is now enslaved")
                     case _:
-                        raise ValueError(f"Unexpected server response: {is_healed}, expected {(socket_messages.SOCKET_CARD_HEALED, socket_messages.SOCKET_CARD_ABANDONED)}") #TODO: complete the card healing logic
+                        raise ValueError(f"Unexpected server response: {is_healed}, expected {(socket_messages.SOCKET_CARD_HEALED, socket_messages.SOCKET_CARD_ABANDONED)}")
                 
                 my_fighting_card.move_to_cardlist(cls.main_warrior_list)
                 my_fighting_card.public = False
@@ -491,18 +527,33 @@ class GameController:
                 opponents_fighting_card.help_string = ""
                 cls.send_public_entities()
             elif my_fighting_card < opponents_fighting_card:
-                cls.set_footer(Entity(f"Your card lost the battle! {my_fighting_card} is wounded", colors.NONE, coords = GameController.get_footer_start_coordinates()))
+                cls.footer_message(f"Your card lost the battle! {my_fighting_card} is wounded")
                 cls.open_action_menu(owner = my_fighting_card, override = action_menu_overrides.BATTLE_LOST)
                 cls.cursor.scope_forward(GameController.current_action_menu)
-                while True:
-                    getkey()
-                
                 cls.refresh_screen()
+                while cls.current_action_menu:
+                    getkey()
+                cls.cursor.hide()
+                if cls.battle_result != -1:
+                    damage = WARRIOR_FACE_VALUES.index(my_fighting_card.content) + 1
+                    GameController.footer_message(f"{my_fighting_card} was healed. {opponents_fighting_card} takes {damage} damage. The battle continues")
+                    opponents_fighting_card.take_damage(damage)
+                else:
+                    GameController.footer_message(f"{my_fighting_card} was abandoned. It is now enslaved")
             
-        return battle_result
+        return GameController.battle_result
 
     @classmethod
     def end_turn_sequence(cls) -> None:
+        if GameController.current_action_menu != []:
+            GameController.close_action_menu()
+            GameController.refresh_screen()
+        
+        while len(GameController.cursor.scope_stack) > 1: # move cursor back to top
+                GameController.cursor.scope_backward()
+            
+        GameController.cursor.hide()
+
         opponents_fighting_card_slot = find_by_coordinates(cls.received_entities, reverse_y(FIGHTING_CARD_COORDINATES))
         if opponents_fighting_card_slot and len(cls.fighting_card_slot) > 0 and len(opponents_fighting_card_slot) > 0:
             sendall_with_end(s, socket_messages.SOCKET_BATTLE_START)
@@ -520,6 +571,7 @@ class GameController:
         menu: List[Entity] = []
 
         if override:
+            cls.is_action_menu_overriden = True
             match override:
                 case action_menu_overrides.BATTLE_LOST:
                     menu.extend([GameController.action_entries.heal_defeated_card, GameController.action_entries.pass_entry])
@@ -530,7 +582,7 @@ class GameController:
                 menu.append(GameController.action_entries.put_out_to_battle)
             
         if not menu:
-            cls.set_footer(Entity("No action can be performed by this entity", colors.NONE, coords = ACTION_MENU_START_COORDINATES))
+            cls.footer_message("No action can be performed by this entity")
             return False
 
         number_of_entries = len(menu)
@@ -545,9 +597,11 @@ class GameController:
             menu += [Entity(content = LATERAL_FIELD_BORDER_CHARACTER, color = GameController.player_color, coords = (ACTION_MENU_START_COORDINATES.x, ACTION_MENU_START_COORDINATES.y + y + 1)),
                         Entity(content = LATERAL_FIELD_BORDER_CHARACTER, color = GameController.player_color, coords = (ACTION_MENU_START_COORDINATES.x + (GAME_FIELD_WIDTH - 1), ACTION_MENU_START_COORDINATES.y + y + 1))]
 
+        if cls.current_action_menu != []:
+            cls.close_action_menu()
         cls.current_action_menu.update(menu)
         cls.update_footer_location()
-        cls.current_action_menu_owner = owner # save the entity that owns the menu
+        cls.current_action_menu_owner = owner # save the entity which owns the menu
         return True
 
     @classmethod
@@ -555,10 +609,12 @@ class GameController:
         cls.current_action_menu.clear()
         cls.update_footer_location()
         cls.current_action_menu_owner = None
+        if cls.is_action_menu_overriden:
+            cls.is_action_menu_overriden = False
     
     @classmethod
     def get_footer_start_coordinates(cls) -> Coordinates:
-        if cls.current_action_menu:
+        if cls.current_action_menu != []:
             return Coordinates(MIN_X, cls.current_action_menu[-1].coords.y + 1)
         else:
             return ACTION_MENU_START_COORDINATES
@@ -571,7 +627,7 @@ class GameController:
             e.set_coords(Coordinates(e.coords.x, e.coords.y + (new_footer_coords.y - current_footer_coords.y)))
 
 GameController.cursor = Cursor(GameController.get_shift_to_free_space, scope = GameController.my_entities, on_select = lambda: (
-    GameController.set_footer(GameController.default_footer) if not GameController.frozen_footer else "",
+    GameController.set_footer(GameController.cursor.selected.help_string) if not GameController.selection_mode else "",
     GameController.refresh_screen()
     ))
 
@@ -640,18 +696,27 @@ def getkey() -> None:
     else:
         GameController.controls[key]()
 
+def handle_action_entry(action_entry: ActionEntry):
+    reqs = action_entry.entity_requirements
+    if reqs:
+        if not GameController.enable_selection_mode(action = action_entry, quantities = reqs.quantities, requirements = reqs.requirements): # enable_selection_mode returns False if failed
+            GameController.footer_message("Not enough entities to perform this action.")
+        GameController.refresh_screen()
+    else:
+        execute_action(action_entry)
+        if GameController.current_action_menu: # if menu is open after executing the action we need to close it
+            GameController.cursor.scope_backward()
+            GameController.close_action_menu()
+        GameController.refresh_screen()
+        if action_entry.turn_ending:
+            GameController.end_turn()
+
 def on_spacebar() -> None:
     if GameController.selection_mode:
         GameController.get_selection()
         GameController.refresh_screen()
     elif isinstance(GameController.cursor.selected, ActionEntry):
-        reqs = GameController.cursor.selected.entity_requirements
-        if reqs:
-            if not GameController.enable_selection_mode(action = GameController.cursor.selected, quantities = reqs.quantities, requirements = reqs.requirements): # enable_selection_mode returns False if failed
-                GameController.set_footer(Entity("Not enough entities to perform this action.", colors.NONE, coords = GameController.get_footer_start_coordinates()))
-            GameController.refresh_screen()
-        else:
-            execute_action(GameController.cursor.selected)
+        handle_action_entry(GameController.cursor.selected)
     else:
         menu_was_opened = GameController.open_action_menu(GameController.cursor.selected) # returns False if no menu was opened
         if menu_was_opened:
@@ -659,17 +724,16 @@ def on_spacebar() -> None:
         GameController.refresh_screen()
 
 def on_q() -> None:
-    try:
-        if GameController.selection_mode == True:
-            GameController.disable_selection_mode()
-            GameController.cursor.scope_backward()
-        else:
-            GameController.cursor.scope_backward()
-            if GameController.current_action_menu != [] and GameController.current_action_menu not in GameController.cursor.scope_stack:
-                GameController.close_action_menu()
-            GameController.refresh_screen()
-    except IndexError:
+    if GameController.selection_mode == True:
+        GameController.disable_selection_mode()
+        GameController.cursor.scope_backward()
+    elif (GameController.is_action_menu_overriden and GameController.current_action_menu is GameController.cursor.get_scope()) \
+    or len(GameController.cursor.scope_stack) < 2:
         pass
+    else:
+        GameController.cursor.scope_backward()
+        GameController.close_action_menu()
+        GameController.refresh_screen()
 
 GameController.my_entities.update([Entity(content = UPPER_FIELD_BORDER, coords = (MIN_X, MIN_Y)),
                                    Entity(content = LOWER_FIELD_BORDER, coords = (MIN_X, MAX_Y))])
@@ -677,7 +741,7 @@ for y in range(MIN_Y + 1, MAX_Y):
     GameController.my_entities.update([Entity(content = LATERAL_FIELD_BORDER_CHARACTER, coords = (MIN_X, y)),
                                        Entity(content = LATERAL_FIELD_BORDER_CHARACTER, coords = (MAX_X, y))])
 
-GameController.set_footer(Entity("Press spacebar when you are ready.", colors.NONE, coords = GameController.get_footer_start_coordinates()))
+GameController.set_footer("Press spacebar when you are ready.")
 GameController.refresh_screen()
 while ' ' != getch(): pass
 clear_screen()
@@ -699,7 +763,7 @@ try:
 
     GameController.player_num = int.from_bytes(data)
     GameController.player_color = PLAYER_COLORS[GameController.player_num]
-    GameController.set_footer(Entity(f"Waiting for the second player to join...", colors.NONE, coords = GameController.get_footer_start_coordinates()))
+    GameController.set_footer(f"Waiting for the second player to join...")
 
     GameController.my_entities.add(Entity(content = PLAYER_SIDE_BORDER, 
                                           coords = (MIN_X + 1, MAX_Y - (PLAYER_SIDE_HEIGHT + 2)), 
@@ -730,7 +794,7 @@ try:
     GameController.main_bandage_list.append(BandageCard(state = CardState(card_type = BandageCard, level = colors.GREEN, face_value = face_values.FACE_VALUE_BANDAGE)))
 
     GameController.send_public_entities()
-    GameController.receive_public_entities()
+    GameController.receive_messages()
 
     GameController.second_player_joined = True
 
@@ -762,26 +826,17 @@ try:
                 while msvcrt.kbhit():
                     getch()
 
-            GameController.set_footer(Entity("It's your turn", colors.NONE, coords = GameController.get_footer_start_coordinates()))
             GameController.cursor.show()
-            GameController.frozen_footer = False
+            GameController.set_footer("It's your turn")
+            GameController.refresh_screen()
 
             while GameController.my_turn:
                 getkey()
         else:
-            while len(GameController.cursor.scope_stack) > 1: # move cursor back to top
-                GameController.cursor.scope_backward()
-            
-            if GameController.current_action_menu != []:
-                GameController.close_action_menu()
-
-            GameController.cursor.hide()
-
-            GameController.frozen_footer = True
-            GameController.set_footer(Entity("It's your opponent's turn", colors.NONE, coords = GameController.get_footer_start_coordinates()))
+            GameController.set_footer("It's your opponent's turn")
             GameController.refresh_screen()
 
-            while GameController.receive_public_entities():
+            while GameController.receive_messages():
                 GameController.refresh_screen()
 
 except (KeyboardInterrupt): # KeyboardInterrupt
